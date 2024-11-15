@@ -68,6 +68,43 @@ type llmServer struct {
 	sem *semaphore.Weighted
 }
 
+// CleanupOrphanedLlamaServers terminates orphaned llama server processes.
+// This should be run when starting a new llama server instance to prevent resource conflicts.
+func CleanupOrphanedLlamaServers() {
+	// Only run on Windows, as this code is Windows-specific.
+	if runtime.GOOS != "windows" {
+		return
+	}
+
+	// Use "tasklist" to list processes and identify orphaned llama server processes.
+	cmd := exec.Command("tasklist")
+	output, err := cmd.Output()
+	if err != nil {
+		slog.Error("failed to execute tasklist command", "error", err)
+		return
+	}
+
+	// Check for orphaned "ollama_llama_server.exe" processes.
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines {
+		if strings.Contains(line, "ollama_llama_server.exe") {
+			fields := strings.Fields(line)
+			if len(fields) < 2 {
+				continue
+			}
+			pid := fields[1]
+
+			// Attempt to terminate the process
+			killCmd := exec.Command("taskkill", "/PID", pid, "/F")
+			if err := killCmd.Run(); err != nil {
+				slog.Error("failed to terminate orphaned llama server process", "pid", pid, "error", err)
+			} else {
+				slog.Info("terminated orphaned llama server process", "pid", pid)
+			}
+		}
+	}
+}
+
 // LoadModel will load a model from disk. The model must be in the GGML format.
 //
 // It collects array values for arrays with a size less than or equal to
@@ -91,6 +128,9 @@ func LoadModel(model string, maxArraySize int) (*GGML, error) {
 // NewLlamaServer will run a server for the given GPUs
 // The gpu list must be a single family.
 func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapters, projectors []string, opts api.Options, numParallel int) (LlamaServer, error) {
+	// Clean up any orphaned llama server processes before starting a new one.
+	CleanupOrphanedLlamaServers()
+
 	var err error
 	var cpuRunner string
 	var estimate MemoryEstimate
@@ -1067,9 +1107,10 @@ func (s *llmServer) Close() error {
 	if s.cmd != nil {
 		slog.Debug("stopping llama server")
 		if err := s.cmd.Process.Kill(); err != nil {
+			slog.Error("error terminating llama server process", "error", err)
 			return err
 		}
-		// if ProcessState is already populated, Wait already completed, no need to wait again
+		// Wait for the process to exit to ensure clean termination.
 		if s.cmd.ProcessState == nil {
 			slog.Debug("waiting for llama server to exit")
 			<-s.done
