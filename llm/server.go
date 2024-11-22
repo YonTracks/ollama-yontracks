@@ -99,7 +99,7 @@ func CleanupOrphanedLlamaServers() {
 			if err := killCmd.Run(); err != nil {
 				slog.Error("failed to terminate orphaned llama server process", "pid", pid, "error", err)
 			} else {
-				slog.Info("terminated orphaned llama server process", "pid", pid)
+				slog.Debug("terminated orphaned llama server process", "pid", pid)
 			}
 		}
 	}
