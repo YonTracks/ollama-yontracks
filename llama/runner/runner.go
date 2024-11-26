@@ -122,9 +122,11 @@ func (s *Server) NewSequence(prompt string, images []ImageData, params NewSequen
 	params.numKeep = min(params.numKeep, s.cache.numCtx-1)
 
 	if len(inputs) > s.cache.numCtx {
-		slog.Warn("truncating input prompt", "limit", s.cache.numCtx, "prompt", len(inputs), "numKeep", params.numKeep)
+		discard := len(inputs) - s.cache.numCtx
 		newInputs := inputs[:params.numKeep]
-		newInputs = append(newInputs, inputs[len(inputs)-s.cache.numCtx+params.numKeep:]...)
+		newInputs = append(newInputs, inputs[params.numKeep+discard:]...)
+
+		slog.Warn("truncating input prompt", "limit", s.cache.numCtx, "prompt", len(inputs), "keep", params.numKeep, "new", len(newInputs))
 		inputs = newInputs
 	}
 
@@ -162,10 +164,16 @@ func (s *Server) NewSequence(prompt string, images []ImageData, params NewSequen
 // generating image embeddings for each image
 func (s *Server) inputs(prompt string, images []ImageData) ([]input, error) {
 	var inputs []input
+	var parts []string
+	var matches [][]string
 
-	re := regexp.MustCompile(`\[img-(\d+)\]`)
-	parts := re.Split(prompt, -1)
-	matches := re.FindAllStringSubmatch(prompt, -1)
+	if s.image != nil {
+		re := regexp.MustCompile(`\[img-(\d+)\]`)
+		parts = re.Split(prompt, -1)
+		matches = re.FindAllStringSubmatch(prompt, -1)
+	} else {
+		parts = []string{prompt}
+	}
 
 	for i, part := range parts {
 		// text - tokenize
