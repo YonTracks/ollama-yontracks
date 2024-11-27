@@ -71,38 +71,44 @@ type llmServer struct {
 // CleanupOrphanedLlamaServers terminates orphaned llama server processes.
 // This should be run when starting a new llama server instance to prevent resource conflicts.
 func CleanupOrphanedLlamaServers() {
-	// Only run on Windows, as this code is Windows-specific.
 	if runtime.GOOS != "windows" {
 		return
 	}
-
 	// Use "tasklist" to list processes and identify orphaned llama server processes.
-	cmd := exec.Command("tasklist")
+	cmd := exec.Command("tasklist", "/FI", "IMAGENAME eq ollama_llama_server.exe")
 	output, err := cmd.Output()
 	if err != nil {
 		slog.Error("failed to execute tasklist command", "error", err)
 		return
 	}
-
 	// Check for orphaned "ollama_llama_server.exe" processes.
 	lines := strings.Split(string(output), "\n")
+	orphanedPIDs := []string{}
 	for _, line := range lines {
 		if strings.Contains(line, "ollama_llama_server.exe") {
 			fields := strings.Fields(line)
-			if len(fields) < 2 {
-				continue
+			if len(fields) > 1 {
+				orphanedPIDs = append(orphanedPIDs, fields[1])
 			}
-			pid := fields[1]
+		}
+	}
 
-			// Attempt to terminate the process
+	var wg sync.WaitGroup
+	// List over the orphaned PIDs and for now just terminate them all.
+	// TODO: filter out the ones that are not truly orphaned and only kill the ones that are.
+	for _, pid := range orphanedPIDs {
+		wg.Add(1)
+		go func(pid string) {
+			defer wg.Done()
 			killCmd := exec.Command("taskkill", "/PID", pid, "/F")
 			if err := killCmd.Run(); err != nil {
 				slog.Error("failed to terminate orphaned llama server process", "pid", pid, "error", err)
 			} else {
 				slog.Debug("terminated orphaned llama server process", "pid", pid)
 			}
-		}
+		}(pid)
 	}
+	wg.Wait()
 }
 
 // LoadModel will load a model from disk. The model must be in the GGML format.
