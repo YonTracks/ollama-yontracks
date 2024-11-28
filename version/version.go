@@ -1,3 +1,3 @@
 package version
 
-var Version string = "0.4.5-yontracks"
+var Version string = "0.4.6-yontracks"
