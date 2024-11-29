@@ -70,10 +70,12 @@ type llmServer struct {
 
 // CleanupOrphanedLlamaServers terminates orphaned llama server processes.
 // This should be run when starting a new llama server instance to prevent resource conflicts.
+// If ollama crashes or is terminated unexpectedly, it may leave behind orphaned processes that can overwelm the system.
 func CleanupOrphanedLlamaServers() {
 	if runtime.GOOS != "windows" {
 		return
 	}
+
 	// Use "tasklist" to list processes and identify orphaned llama server processes.
 	cmd := exec.Command("tasklist", "/FI", "IMAGENAME eq ollama_llama_server.exe")
 	output, err := cmd.Output()
@@ -81,6 +83,7 @@ func CleanupOrphanedLlamaServers() {
 		slog.Error("failed to execute tasklist command", "error", err)
 		return
 	}
+
 	// Check for orphaned "ollama_llama_server.exe" processes.
 	lines := strings.Split(string(output), "\n")
 	orphanedPIDs := []string{}
@@ -91,6 +94,14 @@ func CleanupOrphanedLlamaServers() {
 				orphanedPIDs = append(orphanedPIDs, fields[1])
 			}
 		}
+	}
+
+	// Log the list of detected processes.
+	if len(orphanedPIDs) > 0 {
+		slog.Debug("detected orphaned llama server processes", "pids", orphanedPIDs)
+	} else {
+		slog.Debug("no orphaned llama server processes detected")
+		return
 	}
 
 	var wg sync.WaitGroup
