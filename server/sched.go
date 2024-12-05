@@ -365,7 +365,7 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 					// We can't unload yet, but want to as soon as the current request completes
 					// So queue up another expired event
 					time.Sleep(10 * time.Millisecond)
-					s.expiredCh <- runner.modelPath
+					s.expiredCh <- runner
 				}(runner)
 				runner.refMu.Unlock()
 				continue
