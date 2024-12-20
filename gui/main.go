@@ -655,7 +655,7 @@ func createInputComponents() (*widget.Entry, *widget.Button, *widget.Button) {
 	sendMessage := func() {
 		userMessage := strings.TrimSpace(messageInput.Text)
 		if len(userMessage) > 500 {
-			updateChatData("assistant: Error: Message too long. Please limit to 500 characters.")
+			updateChatData("assistant: Error: Message too long. Please limit to 500 characters or use the file upload.")
 			return
 		}
 		if userMessage != "" {
