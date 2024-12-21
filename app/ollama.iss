@@ -82,7 +82,7 @@ SetupMutex=OllamaSetupMutex
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [LangOptions]
-DialogFontSize=10
+DialogFontSize=8
 
 [Files]
 #if DirExists("..\dist\windows-amd64")
