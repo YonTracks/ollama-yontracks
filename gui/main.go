@@ -13,9 +13,13 @@ import (
 	"sync"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3" // SQLite driver
+	// SQLite driver for database interactions
+	_ "github.com/mattn/go-sqlite3"
+
+	// Ollama API client
 	"github.com/ollama/ollama/api"
 
+	// Fyne imports for UI
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/canvas"
@@ -27,38 +31,43 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
+// Constants used throughout the code
 const (
-	modelName   = "llama3.1"
-	httpTimeout = 30 * time.Second
-	appIconPath = "app.ico"
-	dbFile      = "ollama_chats.db"
+	modelName   = "llama3.1"        // Example model name for Ollama
+	httpTimeout = 30 * time.Second  // Example timeout for HTTP requests
+	appIconPath = "app.ico"         // Path to the application icon
+	dbFile      = "ollama_chats.db" // SQLite database file name
 )
 
+// Global variables to hold the application state
 var (
-	myApp         fyne.App
-	myWindow      fyne.Window
+	myApp         fyne.App    // The main Fyne app instance
+	myWindow      fyne.Window // The main window
 	chatData      binding.StringList
 	scroll        *container.Scroll
-	currentChatID int
-	db            *sql.DB
-	mu            sync.Mutex
+	currentChatID int        // Tracks which chat is currently active
+	db            *sql.DB    // Global DB connection
+	mu            sync.Mutex // Mutex to prevent concurrent DB writes
 )
 
 func main() {
+	// Initialize the database tables and connect to the database
 	initializeDB()
 	defer db.Close()
 
+	// Initialize and run the GUI application
 	initializeApp()
 }
 
+// initializeDB sets up the SQLite database (opens the connection and creates tables if needed).
 func initializeDB() {
 	var err error
-	db, err = sql.Open("sqlite3", dbFile)
+	db, err = sql.Open("sqlite3", dbFile) // dbFile = ollama_chats.db
 	if err != nil {
 		log.Fatalf("Failed to open database: %v", err)
 	}
 
-	// Create tables if they do not exist
+	// Create the "chats" table if it doesn't exist
 	execSQL(`
 	CREATE TABLE IF NOT EXISTS chats (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -67,6 +76,7 @@ func initializeDB() {
 	);
 	`)
 
+	// Create the "messages" table if it doesn't exist
 	execSQL(`
 	CREATE TABLE IF NOT EXISTS messages (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -78,6 +88,7 @@ func initializeDB() {
 	`)
 }
 
+// execSQL is a helper function to run a SQL statement (used for setup).
 func execSQL(query string) {
 	_, err := db.Exec(query)
 	if err != nil {
@@ -85,20 +96,31 @@ func execSQL(query string) {
 	}
 }
 
+// saveCurrentChat performs several actions to persist the current in-memory chat data to the database:
+// 1. Checks if the current chat is new or existing (by checking a hash).
+// 2. Updates the chat record in the DB if needed.
+// 3. Deletes old messages for the current chat (to replace them).
+// 4. Inserts new messages from the memory binding (chatData).
 func saveCurrentChat() {
 	mu.Lock()
 	defer mu.Unlock()
 
 	if currentChatID < 0 {
+		// Means there's no valid "current" chat
 		return
 	}
 
+	// Get all messages (strings) for the current chat
 	currentChat := getCurrentChat()
 	if len(currentChat) == 0 {
+		// Nothing to save if there are no messages
 		return
 	}
+
+	// Hash the content to track if the chat changed
 	hash := hashChat(currentChat)
 
+	// See if we already have a stored hash for this chat
 	stmt, err := db.Prepare("SELECT hash FROM chats WHERE id = ?")
 	if err != nil {
 		log.Printf("Failed to prepare statement: %v", err)
@@ -109,19 +131,23 @@ func saveCurrentChat() {
 	var existingHash string
 	err = stmt.QueryRow(currentChatID).Scan(&existingHash)
 	if err == sql.ErrNoRows {
+		// If there is no chat record, create a new one
 		title := fmt.Sprintf("Chat %d", getNextChatNumber())
 		insertChat(title, hash)
 	} else if err != nil {
 		log.Printf("Error checking chat: %v", err)
 	} else if existingHash != hash {
+		// If the hashes differ, update it
 		updateChatHash(hash)
 	}
 
+	// Clear out old messages and insert fresh ones
 	deleteOldMessages(currentChatID)
 	insertMessages(currentChat)
 	updateSidebar()
 }
 
+// insertChat creates a new record in the "chats" table, setting currentChatID to that new ID.
 func insertChat(title string, hash string) {
 	stmt, err := db.Prepare("INSERT INTO chats (title, hash) VALUES (?, ?)")
 	if err != nil {
@@ -139,6 +165,7 @@ func insertChat(title string, hash string) {
 	currentChatID = int(newID)
 }
 
+// updateChatHash updates the stored hash for the current chat record.
 func updateChatHash(hash string) {
 	stmt, err := db.Prepare("UPDATE chats SET hash = ? WHERE id = ?")
 	if err != nil {
@@ -153,6 +180,7 @@ func updateChatHash(hash string) {
 	}
 }
 
+// deleteOldMessages removes all messages belonging to a particular chat ID.
 func deleteOldMessages(chatID int) {
 	stmt, err := db.Prepare("DELETE FROM messages WHERE chat_id = ?")
 	if err != nil {
@@ -168,6 +196,7 @@ func deleteOldMessages(chatID int) {
 	updateSidebar()
 }
 
+// insertMessages writes a slice of message strings to the database for the current chat.
 func insertMessages(messages []string) {
 	stmt, err := db.Prepare("INSERT INTO messages (chat_id, role, content) VALUES (?, ?, ?)")
 	if err != nil {
@@ -189,10 +218,12 @@ func insertMessages(messages []string) {
 	}
 }
 
+// isValidRole ensures the role is either "user" or "assistant".
 func isValidRole(role string) bool {
 	return role == "user" || role == "assistant"
 }
 
+// hashChat creates a SHA-256 hash of the entire chat content.
 func hashChat(chat []string) string {
 	hash := sha256.New()
 	for _, line := range chat {
@@ -201,11 +232,13 @@ func hashChat(chat []string) string {
 	return fmt.Sprintf("%x", hash.Sum(nil))
 }
 
+// getCurrentChat retrieves the messages from the chatData binding as a slice of strings.
 func getCurrentChat() []string {
 	items, _ := chatData.Get()
 	return items
 }
 
+// loadChatHistory pulls all messages for a given chat ID from the DB and loads them into chatData.
 func loadChatHistory(chatID int) {
 	mu.Lock()
 	defer mu.Unlock()
@@ -231,11 +264,13 @@ func loadChatHistory(chatID int) {
 			log.Printf("Error scanning message: %v", err)
 			continue
 		}
+		// Combine them as "role: content"
 		messages = append(messages, role+": "+content)
 	}
 	chatData.Set(messages)
 }
 
+// getNextChatNumber gets the number of existing chats, so we can name new chats accordingly (e.g., Chat 1, Chat 2...).
 func getNextChatNumber() int {
 	var count int
 	stmt, err := db.Prepare("SELECT COUNT(*) FROM chats")
@@ -253,6 +288,7 @@ func getNextChatNumber() int {
 	return count + 1
 }
 
+// updateSidebar refreshes the list of chats on the sidebar (left panel).
 func updateSidebar() {
 	chatsList, err := loadChatList()
 	if err != nil {
@@ -260,6 +296,7 @@ func updateSidebar() {
 		return
 	}
 
+	// Create a widget.List to display all chats plus a "New Chat" button at the top
 	serverList := widget.NewList(
 		func() int { return len(chatsList) + 1 },
 		func() fyne.CanvasObject {
@@ -272,6 +309,8 @@ func updateSidebar() {
 			border := o.(*fyne.Container)
 			var label *widget.Label
 			var deleteBtn *widget.Button
+
+			// Extract the label and delete button from the container
 			for _, obj := range border.Objects {
 				switch c := obj.(type) {
 				case *widget.Label:
@@ -280,6 +319,7 @@ func updateSidebar() {
 					deleteBtn = c
 				}
 			}
+
 			if id == 0 {
 				label.SetText("New Chat")
 				deleteBtn.Hide()
@@ -295,6 +335,8 @@ func updateSidebar() {
 		},
 	)
 
+	// When user clicks on an item, if "New Chat" is selected, create a new chat;
+	// otherwise load the saved chat.
 	serverList.OnSelected = func(id widget.ListItemID) {
 		if id == 0 {
 			handleNewChatClick()
@@ -308,12 +350,14 @@ func updateSidebar() {
 	myWindow.SetContent(mainContent)
 }
 
+// chatRecord holds a single row from the "chats" table.
 type chatRecord struct {
 	id    int
 	title string
 	hash  string
 }
 
+// loadChatList retrieves all chats from the database (for sidebar display).
 func loadChatList() ([]chatRecord, error) {
 	rows, err := db.Query("SELECT id, title, hash FROM chats ORDER BY id")
 	if err != nil {
@@ -333,6 +377,11 @@ func loadChatList() ([]chatRecord, error) {
 	return result, nil
 }
 
+// handleNewChatClick does the following:
+// 1. Saves the current chat (if any)
+// 2. Creates a brand-new chat record in the DB
+// 3. Sets chatData to have an initial welcome message from the assistant
+// 4. Refreshes the sidebar
 func handleNewChatClick() {
 	saveCurrentChat()
 
@@ -352,18 +401,24 @@ func handleNewChatClick() {
 
 	newID, _ := res.LastInsertId()
 	currentChatID = int(newID)
+
+	// Set an initial message in the new chat
 	initialMessage := []string{"assistant: Welcome to your new chat!"}
 	chatData.Set(initialMessage)
+
+	// Save immediately so it persists
 	saveCurrentChat()
 	updateSidebar()
 }
 
+// handleSavedChatClick loads an existing chat from the DB.
 func handleSavedChatClick(chatID int) {
 	saveCurrentChat()
 	currentChatID = chatID
 	loadChatHistory(chatID)
 }
 
+// deleteChat removes the chat record and messages from the database, and resets the current chat if needed.
 func deleteChat(chatID int) {
 	stmt, err := db.Prepare("DELETE FROM chats WHERE id = ?")
 	if err != nil {
@@ -377,15 +432,13 @@ func deleteChat(chatID int) {
 		log.Printf("Failed to delete chat: %v", err)
 	}
 
-	// If we deleted the current chat, reset to a default state
+	// If the deleted chat was the current chat, pick another if available, else clear everything
 	if chatID == currentChatID {
-		// Load another chat if available
 		chatsList, _ := loadChatList()
 		if len(chatsList) > 0 {
 			currentChatID = chatsList[0].id
 			loadChatHistory(currentChatID)
 		} else {
-			// No chats left
 			currentChatID = -1
 			chatData.Set([]string{})
 		}
@@ -394,21 +447,26 @@ func deleteChat(chatID int) {
 	updateSidebar()
 }
 
-// makeMainUI creates the primary UI layout
+// makeMainUI sets up the main horizontal split: left sidebar (chat list) and right panel (chat history + input).
 func makeMainUI(serverList *widget.List) fyne.CanvasObject {
+	// The scrollable chat area
 	chatHistory := createChatHistory()
 
+	// Create the message input field, the upload button, and the send button
 	messageInput, uploadButton, sendButton := createInputComponents()
 
+	// Lay out the input components along the bottom
 	inputContainer := container.NewBorder(nil, nil, uploadButton, sendButton, messageInput)
 	messagePane := container.NewBorder(nil, inputContainer, nil, nil, chatHistory)
+
+	// Split layout: left panel (serverList) and right panel (messagePane)
 	mainContent := container.NewHSplit(serverList, messagePane)
-	mainContent.SetOffset(0.2)
+	mainContent.SetOffset(0.2) // 20% for the sidebar, 80% for the chat content
 
 	return mainContent
 }
 
-// setTheme toggles between light and dark themes
+// setTheme switches between dark and light mode for the app.
 func setTheme(isDark bool) {
 	if isDark {
 		myApp.Settings().SetTheme(theme.DarkTheme())
@@ -417,9 +475,9 @@ func setTheme(isDark bool) {
 	}
 }
 
+// rebuildChatHistory clears and rebuilds the scrollable chat UI from the chatData binding.
 func rebuildChatHistory() {
 	chatContent := scroll.Content.(*fyne.Container)
-
 	chatContent.Objects = nil
 
 	items, _ := chatData.Get()
@@ -431,13 +489,14 @@ func rebuildChatHistory() {
 			chatContent.Add(createChatBubble(content, isUser))
 		}
 	}
-
-	chatContent.Refresh()
+	scroll.ScrollToBottom()
 }
 
+// parseRoleAndContent splits a message string into role ("user" or "assistant" or "system") and content.
 func parseRoleAndContent(line string) (string, string) {
 	parts := strings.SplitN(line, ":", 2)
 	if len(parts) != 2 {
+		// Default to "system" if no explicit role is found
 		return "system", line
 	}
 
@@ -446,6 +505,7 @@ func parseRoleAndContent(line string) (string, string) {
 	return role, content
 }
 
+// loadAppIcon attempts to load an icon file from the given path and returns a fyne.Resource.
 func loadAppIcon(relativePath string) fyne.Resource {
 	absPath, err := filepath.Abs(relativePath)
 	if err != nil {
@@ -461,38 +521,42 @@ func loadAppIcon(relativePath string) fyne.Resource {
 	return fyne.NewStaticResource("app.ico", iconData)
 }
 
+// initializeApp sets up the main Fyne application window and loads or creates the initial chat.
 func initializeApp() {
 	myApp = app.NewWithID("ollama.gui")
 	myWindow = myApp.NewWindow("Ollama GUI")
 
+	// Attempt to load an application icon (optional)
 	appIcon := loadAppIcon(appIconPath)
 	if appIcon != nil {
 		myWindow.SetIcon(appIcon)
 	}
 
-	createMenuBar()
+	createMenuBar() // Create the main menu bar
 
 	chatData = binding.NewStringList()
 
-	// If no chats exist, create a default one
+	// If the database has no chats, create one by default
 	var chatCount int
 	err := db.QueryRow("SELECT COUNT(*) FROM chats").Scan(&chatCount)
 	if err != nil {
 		log.Printf("Failed to count chats: %v", err)
 	}
 	if chatCount == 0 {
-		// Insert initial chat
+		// Insert an initial "Welcome Chat"
 		res, err := db.Exec("INSERT INTO chats (title, hash) VALUES (?, ?)", "Welcome Chat", "")
 		if err != nil {
 			log.Printf("Failed to create initial chat: %v", err)
 		}
 		newID, _ := res.LastInsertId()
 		currentChatID = int(newID)
+
+		// Store a welcome message
 		initialMessage := []string{"assistant: Welcome to the chat!"}
 		chatData.Set(initialMessage)
 		saveCurrentChat()
 	} else {
-		// Load the first chat by default
+		// Otherwise, load the first chat found in the DB
 		var firstChatID int
 		err := db.QueryRow("SELECT id FROM chats ORDER BY id LIMIT 1").Scan(&firstChatID)
 		if err == nil {
@@ -501,8 +565,8 @@ func initializeApp() {
 		}
 	}
 
+	// Build the sidebar list again here
 	chatsList, _ := loadChatList()
-
 	serverList := widget.NewList(
 		func() int { return len(chatsList) + 1 },
 		func() fyne.CanvasObject {
@@ -538,6 +602,7 @@ func initializeApp() {
 		},
 	)
 
+	// Handle click in the sidebar
 	serverList.OnSelected = func(id widget.ListItemID) {
 		if id == 0 {
 			handleNewChatClick()
@@ -555,7 +620,7 @@ func initializeApp() {
 	myWindow.ShowAndRun()
 }
 
-// createMenuBar creates the top menu
+// createMenuBar creates the top menubar with various options (Theme toggle, About, etc.).
 func createMenuBar() {
 	themeToggle := fyne.NewMenuItem("Toggle Theme", func() {
 		pref := myApp.Preferences()
@@ -564,6 +629,7 @@ func createMenuBar() {
 		setTheme(isDark)
 	})
 
+	// Construct the main menu
 	menu := fyne.NewMainMenu(
 		fyne.NewMenu("Settings",
 			fyne.NewMenuItem("Preferences", func() {
@@ -601,15 +667,17 @@ func createMenuBar() {
 	myWindow.SetMainMenu(menu)
 }
 
-// createChatBubble creates a styled chat bubble
+// createChatBubble generates the UI for a single chat message bubble.
 func createChatBubble(message string, isUser bool) *fyne.Container {
 	label := widget.NewLabel(message)
 	label.Wrapping = fyne.TextWrapWord
 
+	// Use a stack container so we can have a background rectangle behind the text
 	bubble := container.NewStack(
 		canvasWithBackgroundAndCenteredInput(label, isUser),
 	)
 
+	// If user message, place it on the right; otherwise on the left
 	if isUser {
 		return container.NewHBox(layout.NewSpacer(), bubble)
 	} else {
@@ -617,28 +685,27 @@ func createChatBubble(message string, isUser bool) *fyne.Container {
 	}
 }
 
-// canvasWithBackgroundAndCenteredInput creates a styled background with rounded corners
+// canvasWithBackgroundAndCenteredInput creates a rounded rectangle behind the text.
 func canvasWithBackgroundAndCenteredInput(content fyne.CanvasObject, isUser bool) fyne.CanvasObject {
 	var bgColor color.Color
 	if isUser {
-		bgColor = color.Gray{Y: 128} // Gray color for user background
+		bgColor = color.Gray{Y: 128} // Gray color for the user background
 	} else {
 		bgColor = color.Transparent
 	}
 
-	// Create a rounded rectangle instead of using circles
+	// Create a rectangle with corner radius for a "bubble" effect
 	roundedRect := canvas.NewRectangle(bgColor)
 	roundedRect.SetMinSize(fyne.NewSize(600, content.MinSize().Height+20))
 	roundedRect.StrokeColor = bgColor
 	roundedRect.StrokeWidth = 0
+	roundedRect.CornerRadius = 10 // Adjust as needed
 
-	// Set CornerRadius (custom container for simulation)
-	roundedRect.CornerRadius = 10 // Adjust for desired corner rounding
-
-	// Combine the background with content
+	// Stack the background rectangle behind the text
 	return centeredContainer(container.NewStack(roundedRect, content))
 }
 
+// centeredContainer horizontally centers the content.
 func centeredContainer(content fyne.CanvasObject) fyne.CanvasObject {
 	return container.NewVBox(
 		layout.NewSpacer(),
@@ -647,117 +714,166 @@ func centeredContainer(content fyne.CanvasObject) fyne.CanvasObject {
 	)
 }
 
-// createInputComponents creates the message input field, upload button, and send button
+// createInputComponents returns the message input field, upload button, and send button.
 func createInputComponents() (*widget.Entry, *widget.Button, *widget.Button) {
 	messageInput := widget.NewEntry()
 	messageInput.SetPlaceHolder("Type your message here...")
 
+	// The function to execute when "Send" is clicked or the Enter key is pressed
 	sendMessage := func() {
 		userMessage := strings.TrimSpace(messageInput.Text)
 		if len(userMessage) > 500 {
+			// Just an example limit
 			updateChatData("assistant: Error: Message too long. Please limit to 500 characters or use the file upload.")
 			return
 		}
 		if userMessage != "" {
 			updateChatData("user: " + userMessage)
 			messageInput.SetText("")
-			go handleUserMessage(userMessage)
+			go handleUserMessage()
 		}
 	}
 
+	// Submitting the text (hitting Enter) calls sendMessage
 	messageInput.OnSubmitted = func(content string) {
 		sendMessage()
 	}
 
+	// A placeholder button for uploading a file (feature not fully implemented)
 	uploadButton := widget.NewButton("+", func() {
 		dialog.ShowInformation("File Upload", "Feature to upload files will be added.", myWindow)
 	})
 
+	// The "Send" button
 	sendButton := widget.NewButton("Send", sendMessage)
 
-	// Return all three so we can arrange them in makeMainUI()
 	return messageInput, uploadButton, sendButton
 }
 
-// createChatHistory sets up the scrollable chat history
+// Assistant response tracking in global variables (for partial streaming updates).
+var (
+	assistantIndex  = -1            // Which index in chatData the partial text is being appended to
+	assistantBubble *fyne.Container // Reference to the bubble container (not fully used in this snippet)
+	assistantLabel  *widget.Label   // Reference to the label (not fully used in this snippet)
+)
+
+// createChatHistory builds a scrollable container that displays all messages in chatData.
 func createChatHistory() *fyne.Container {
 	chatContent := container.NewVBox()
 	scroll = container.NewVScroll(chatContent)
-	scroll.SetMinSize(fyne.NewSize(400, 600))
+	scroll.SetMinSize(fyne.NewSize(200, 300))
 
+	var displayedItems []string // local copy to detect changes
+
+	// When chatData changes, update the UI
 	chatData.AddListener(binding.NewDataListener(func() {
-		chatContent.Objects = nil
-		items, _ := chatData.Get()
-		for _, line := range items {
-			role, content := parseRoleAndContent(line)
-			switch role {
-			case "user":
-				chatContent.Add(createChatBubble(content, true))
-			case "assistant":
-				chatContent.Add(createChatBubble(content, false))
+		newItems, _ := chatData.Get()
+
+		// If we have more items than previously, append the new ones
+		for i := len(displayedItems); i < len(newItems); i++ {
+			role, content := parseRoleAndContent(newItems[i])
+			isUser := (role == "user")
+			bubble := createChatBubble(content, isUser)
+			chatContent.Add(bubble)
+		}
+
+		// If any item was modified in place, refresh that bubble
+		minLen := min(len(displayedItems), len(newItems))
+		for i := 0; i < minLen; i++ {
+			if newItems[i] != displayedItems[i] {
+				role, content := parseRoleAndContent(newItems[i])
+				isUser := (role == "user")
+				chatContent.Objects[i] = createChatBubble(content, isUser)
 			}
 		}
-		chatContent.Refresh()
+
+		displayedItems = newItems
+
+		// Scroll to bottom if new messages are appended
+		if len(newItems) > 0 {
+			scroll.ScrollToBottom()
+		}
 	}))
 
 	return container.New(layout.NewStackLayout(), scroll)
 }
 
-// handleUserMessage processes the user's message
-func handleUserMessage(userMessage string) {
-	if err := streamFromOllama(userMessage); err != nil {
+// min is a small helper to get the smaller of two int values.
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// handleUserMessage streams a response from Ollama (the LLM) based on the conversation so far.
+func handleUserMessage() {
+	if err := streamFromOllama(); err != nil {
 		updateChatData("assistant: Error: " + fmt.Sprintf("%v", err))
 	}
 	saveCurrentChat()
 }
 
-// updateChatData safely updates the chat data binding
+// updateChatData appends a new message to the chatData binding.
 func updateChatData(message string) {
 	items, _ := chatData.Get()
 	chatData.Set(append(items, message))
 }
 
-// streamFromOllama streams the assistant's response
-func streamFromOllama(userMessage string) error {
-	// Initialize the Ollama API client
+// streamFromOllama streams partial responses from the Ollama model and updates the chat UI in real-time.
+func streamFromOllama() error {
+	// 1) Create a new Ollama client from environment variables/config
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return fmt.Errorf("failed to create Ollama API client: %w", err)
 	}
 
-	// Prepare chat messages, including the user's latest message
-	messages := []api.Message{
-		{Role: "user", Content: userMessage},
+	// 2) Gather the entire conversation from chatData
+	items, _ := chatData.Get()
+	var messages []api.Message
+	for _, line := range items {
+		role, content := parseRoleAndContent(line)
+		// Normalize role to system/user/assistant
+		if role != "user" && role != "assistant" && role != "system" {
+			role = "system"
+		}
+		messages = append(messages, api.Message{
+			Role:    role,
+			Content: content,
+		})
 	}
 
-	ctx := context.Background()
-
-	// Prepare the chat request
+	// 3) Build a ChatRequest with the entire conversation
 	req := &api.ChatRequest{
 		Model:    modelName,
 		Messages: messages,
 	}
 
 	var assistantMessageBuilder strings.Builder
-	var assistantIndex int = -1
+	var assistantIndex = -1
 
+	// 4) Define how to handle each partial response from Ollama
 	respFunc := func(resp api.ChatResponse) error {
 		assistantMessageBuilder.WriteString(resp.Message.Content)
 
 		items, _ := chatData.Get()
 
+		// If this is the first partial chunk for the assistant, append a new line to chatData
 		if assistantIndex == -1 {
 			newLine := "assistant: " + assistantMessageBuilder.String()
 			items = append(items, newLine)
 			chatData.Set(items)
 			assistantIndex = len(items) - 1
 		} else {
+			// Otherwise, update the existing line in chatData
 			updatedLine := "assistant: " + assistantMessageBuilder.String()
 			items[assistantIndex] = updatedLine
 			chatData.Set(items)
+			// Rebuild chat history to reflect partial updates
 			rebuildChatHistory()
 		}
 
+		// If the streaming is done, reset for next time
 		if resp.Done {
 			assistantMessageBuilder.Reset()
 			assistantIndex = -1
@@ -765,8 +881,10 @@ func streamFromOllama(userMessage string) error {
 		return nil
 	}
 
-	if err := client.Chat(ctx, req, respFunc); err != nil {
-		log.Fatal(err)
+	// 5) Send the conversation to Ollama and stream responses
+	if err := client.Chat(context.Background(), req, respFunc); err != nil {
+		return fmt.Errorf("error in Ollama chat request: %w", err)
 	}
+
 	return nil
 }
