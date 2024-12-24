@@ -412,6 +412,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 		if runtime.GOOS == "windows" {
 			pathEnv = "PATH"
 		}
+
 		// Start with the server directory for the LD_LIBRARY_PATH/PATH
 		libraryPaths := []string{filepath.Dir(server)}
 

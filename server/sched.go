@@ -129,7 +129,12 @@ func (s *Scheduler) processPending(ctx context.Context) {
 				slog.Debug("pending request cancelled or timed out, skipping scheduling")
 				continue
 			}
-			numParallel := int(envconfig.NumParallel())
+
+			// Handle embeddings with strict serialization
+			numParallel := 1
+			if pending.model.CheckCapabilities(CapabilityCompletion) != nil {
+				numParallel = max(1, int(envconfig.NumParallel()))
+			}
 			// TODO (jmorganca): mllama doesn't support parallel yet
 			// see https://github.com/ollama/ollama/issues/4165
 			if checkMllamaModelFamily(pending.model) && numParallel != 1 {
@@ -573,39 +578,57 @@ func (runner *runnerRef) unload() {
 
 func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool {
 	slog.Debug("evaluating already loaded", "model", req.model.ModelPath)
-	runner.refMu.Lock()
-	defer runner.refMu.Unlock()
 
 	timeout := 10 * time.Second
 	if runner.loading {
 		timeout = 2 * time.Minute // Initial load can take a long time for big models on slow systems...
 	}
 
-	if runner.Options == nil {
-		return true
+	startTime := time.Now()
+	for {
+		if time.Since(startTime) > timeout {
+			return true
+		}
+
+		// Try to acquire lock with a short timeout
+		locked := make(chan struct{})
+		go func() {
+			runner.refMu.Lock()
+			defer runner.refMu.Unlock()
+			locked <- struct{}{}
+		}()
+
+		select {
+		case <-locked:
+			if runner.Options == nil {
+				return true
+			}
+
+			// Don't reload runner if num_gpu=-1 was provided
+			optsExisting := runner.Options.Runner
+			optsNew := req.opts.Runner
+			if optsNew.NumGPU < 0 {
+				optsExisting.NumGPU = -1
+				optsNew.NumGPU = -1
+			}
+
+			// Normalize the NumCtx for parallelism
+			optsExisting.NumCtx = optsExisting.NumCtx / runner.numParallel
+
+			requestCtx, cancel := context.WithTimeout(ctx, timeout-time.Since(startTime))
+			defer cancel()
+			if !reflect.DeepEqual(runner.model.AdapterPaths, req.model.AdapterPaths) || // have the adapters changed?
+				!reflect.DeepEqual(runner.model.ProjectorPaths, req.model.ProjectorPaths) || // have the projectors changed?
+				!reflect.DeepEqual(optsExisting, optsNew) || // have the runner options changed?
+				runner.llama.Ping(requestCtx) != nil {
+				return true
+			}
+			return false
+		case <-time.After(1 * time.Second):
+			// Unblock every second if lock not acquired
+			slog.Debug("needsReload: waiting for lock to evaluate runner")
+		}
 	}
-
-	// Don't reload runner if num_gpu=-1 was provided
-	optsExisting := runner.Options.Runner
-	optsNew := req.opts.Runner
-	if optsNew.NumGPU < 0 {
-		optsExisting.NumGPU = -1
-		optsNew.NumGPU = -1
-	}
-
-	// Normalize the NumCtx for parallelism
-	optsExisting.NumCtx = optsExisting.NumCtx / runner.numParallel
-
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	if !reflect.DeepEqual(runner.model.AdapterPaths, req.model.AdapterPaths) || // have the adapters changed?
-		!reflect.DeepEqual(runner.model.ProjectorPaths, req.model.ProjectorPaths) || // have the projectors changed?
-		!reflect.DeepEqual(optsExisting, optsNew) || // have the runner options changed?
-		runner.llama.Ping(ctx) != nil {
-		return true
-	}
-
-	return false
 }
 
 // Free memory reporting on GPUs can lag for a while even after the runner
