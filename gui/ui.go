@@ -421,6 +421,8 @@ func handleSavedChatClick(chatID int) {
 	saveCurrentChat()
 	currentChatID = chatID
 	loadChatHistory(chatID)
+	// Refresh the UI
+	updateSidebar()
 }
 
 // min is a small helper to get the smaller of two int values.
