@@ -40,7 +40,7 @@ In the top directory of this repo, run:
 
 !! !! If `DemoGUI.exe` is running when you run this command, a corrupted executable file will be created and need to be deleted the app may not function properly. !!
 ```
-go build -o DemoGUI.exe
+go build -o gui/DemoGUI.exe ./gui
 ```
 
  To bypass OllamaSetup.exe, build and run the app directly, testing the tray menu functionality and any app changes, use:

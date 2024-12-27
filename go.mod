@@ -18,6 +18,7 @@ require (
 require (
 	fyne.io/fyne/v2 v2.5.3
 	github.com/agnivade/levenshtein v1.1.1
+	github.com/alecthomas/chroma v0.10.0
 	github.com/d4l3k/go-bfloat16 v0.0.0-20211005043715-690c3bdd05f1
 	github.com/google/go-cmp v0.6.0
 	github.com/mattn/go-runewidth v0.0.14
@@ -37,6 +38,7 @@ require (
 	github.com/cloudwego/base64x v0.1.4 // indirect
 	github.com/cloudwego/iasm v0.2.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
+	github.com/dlclark/regexp2 v1.4.0 // indirect
 	github.com/fredbi/uri v1.1.0 // indirect
 	github.com/fsnotify/fsnotify v1.7.0 // indirect
 	github.com/fyne-io/gl-js v0.0.0-20220119005834-d2da28d9ccfe // indirect

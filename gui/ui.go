@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"image/color"
 	"log"
@@ -19,13 +20,15 @@ import (
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
+	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/format"
 )
 
 // Constants used throughout the code
 const (
-	modelName   = "llama3.1"       // Example model name for Ollama
-	httpTimeout = 30 * time.Second // Example timeout for HTTP requests
-	appIconPath = "app.ico"        // Path to the application icon
+	defaultModel = "llama3.1"       // Example model name for Ollama
+	httpTimeout  = 30 * time.Second // Example timeout for HTTP requests
+	appIconPath  = "app.ico"        // Path to the application icon
 )
 
 // Global variables to hold the application state (could be in a struct).
@@ -93,6 +96,55 @@ func ensureInitialChat() {
 	}
 }
 
+// more menu items if needed in the ui
+// commented out below
+func createTopBar() fyne.CanvasObject {
+	// Create the three “buttons”
+	toolsBtn := widget.NewButton("Tools", func() {
+		// TODO: tools logic, or open a dialog
+		dialog.ShowInformation("Tools", "Tools coming soon.", myWindow)
+	})
+
+	// The “Search” button: we can just do one big button that spans 5 columns
+	// We'll place it in the layout across 5 columns by hacking it with dummy spacers.
+	searchBtn := widget.NewButton("Search", func() {
+		dialog.ShowInformation("Search", "Imagine a search (model selection) popup here.", myWindow)
+	})
+	// Optionally set a larger MinSize if you want it obviously wide
+	// searchBtn.Resize(fyne.NewSize(300, 40)) // only works after creation if placed in a custom layout
+
+	themeBtn := widget.NewButton("Theme", func() {
+		// Toggle theme or open a theme dialog
+		pref := myApp.Preferences()
+		isDark := !pref.Bool("dark_mode")
+		pref.SetBool("dark_mode", isDark)
+		setTheme(isDark)
+	})
+
+	// The layout:
+	// [ Tools ] [ Search ] [ Search ] [ Search ] [ Search ] [ Search ] [ Theme ]
+	// The middle 5 columns each hold the same searchBtn instance,
+	// but we’ll do a trick: we place the real button in one column,
+	// and “empty” placeholders or layout spacers in others, so that
+	// the total space is visually 5 columns wide for “Search.”
+
+	// I think a simpler approach is to do a single column for Tools, single column for Theme,
+	// and put the rest in a single container with a bigger MinSize for the search.
+	// However, here’s the literal 7-column approach:
+
+	// Dummy label or spacer for the columns we want to fill
+	spacer := canvas.NewText("", color.Transparent) // an invisible spacer
+
+	return container.NewGridWithColumns(7,
+		// 1: Tools
+		toolsBtn,
+		// 2..6: A wide area for “Search”
+		searchBtn, spacer, spacer, spacer, spacer,
+		// 7: Theme
+		themeBtn,
+	)
+}
+
 // buildUI constructs the main UI layout with a sidebar list and chat pane.
 func buildUI() {
 	chatsList, err := loadChatList()
@@ -150,7 +202,233 @@ func buildUI() {
 	}
 
 	mainUI := makeMainUI(serverList)
-	myWindow.SetContent(mainUI)
+	// Create the top bar
+	// topBar := createTopBar()
+
+	// Combine topBar and mainUI in a border layout:
+	// topBar on top, mainUI in the center
+	finalContent := container.NewBorder(
+		nil,    // top
+		nil,    // bottom
+		nil,    // left
+		nil,    // right
+		mainUI, // center
+	)
+
+	myWindow.SetContent(finalContent)
+}
+
+func displayModelList() {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		dialog.ShowError(err, myWindow)
+		return
+	}
+
+	ctx := context.Background()
+	models, err := client.List(ctx)
+	if err != nil {
+		dialog.ShowError(err, myWindow)
+		return
+	}
+
+	if len(models.Models) == 0 {
+		dialog.ShowInformation("Models", "No models available.", myWindow)
+		return
+	}
+
+	// Build table data with headers
+	modelData := [][]string{
+		{"Name", "Model", "Modified At", "Size", "Digest" /*"Details"*/}, // Headers
+	}
+
+	// Populate the table data
+	for _, m := range models.Models {
+		// Extract the part before the first ":" in the name
+		trimmedName := m.Name
+		if idx := strings.Index(m.Name, ":"); idx != -1 {
+			trimmedName = m.Name[:idx] // Extract the substring before ":"
+		}
+
+		// Limit to 16 characters and truncate if necessary
+		if len(trimmedName) > 16 {
+			trimmedName = trimmedName[:15] + "…" // Truncate and add an ellipsis
+		}
+
+		humanTime := format.HumanTime(m.ModifiedAt, "Unknown")
+		humanSize := format.HumanBytes(m.Size)
+		// details := fmt.Sprintf("Family: %s, Parent: %s", m.Details.Family, m.Details.ParentModel)
+
+		modelData = append(modelData, []string{
+			trimmedName, // Use the trimmed and truncated name
+			m.Model,
+			humanTime,
+			humanSize,
+			m.Digest,
+			// details,
+		})
+	}
+
+	// Create the table widget
+	table := widget.NewTable(
+		func() (int, int) {
+			return len(modelData), len(modelData[0]) // Total rows and columns
+		},
+		func() fyne.CanvasObject {
+			// Template for a single cell
+			return widget.NewLabel("")
+		},
+		func(id widget.TableCellID, cell fyne.CanvasObject) {
+			label := cell.(*widget.Label)
+			label.SetText(modelData[id.Row][id.Col])
+
+			// Style the header row
+			if id.Row == 0 {
+				label.TextStyle = fyne.TextStyle{Bold: true}
+			}
+		},
+	)
+
+	// Set uniform column widths for better alignment
+	table.SetColumnWidth(0, 200) // Name
+	table.SetColumnWidth(1, 350) // Model
+	table.SetColumnWidth(2, 150) // Modified At
+	table.SetColumnWidth(3, 100) // Size
+	table.SetColumnWidth(4, 450) // Digest
+	// table.SetColumnWidth(5, 450) // Details
+
+	// Wrap the table in a scroll container
+	scroll := container.NewVScroll(table)
+	scroll.SetMinSize(fyne.NewSize(900, 400)) // Minimum size for table container
+
+	// Add a heading above the table
+	heading := widget.NewLabel("Downloaded Models")
+	heading.TextStyle = fyne.TextStyle{Bold: true}
+
+	// Use a Border layout to position the heading and table
+	content := container.NewBorder(
+		heading, // top
+		nil,     // bottom
+		nil,     // left
+		nil,     // right
+		scroll,  // center
+	)
+
+	// Create a new window for the table
+	modelWindow := myApp.NewWindow("Model List")
+	modelWindow.SetContent(content)
+	modelWindow.Resize(fyne.NewSize(1000, 600)) // Adjust the window size for better layout
+	modelWindow.Show()
+}
+
+func displayRunningModels() {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		dialog.ShowError(err, myWindow)
+		return
+	}
+
+	ctx := context.Background()
+	runningModels, err := client.ListRunning(ctx)
+	if err != nil {
+		dialog.ShowError(err, myWindow)
+		return
+	}
+
+	if len(runningModels.Models) == 0 {
+		dialog.ShowInformation("Running Models", "No models are currently running.", myWindow)
+		return
+	}
+
+	// Build table data with headers
+	modelData := [][]string{
+		{"Model", "Size", "Process", "Expires At"}, // Headers
+	}
+
+	// Populate the table data
+	for _, m := range runningModels.Models {
+		// Extract the part before the first ":" in the name
+		trimmedName := m.Name
+		if idx := strings.Index(m.Name, ":"); idx != -1 {
+			trimmedName = m.Name[:idx] // Extract the substring before ":"
+		}
+
+		// Limit to 16 characters and truncate if necessary
+		if len(trimmedName) > 16 {
+			trimmedName = trimmedName[:15] + "…" // Truncate and add an ellipsis
+		}
+
+		// Calculate the process type
+		var processLabel string
+		if m.Size == m.SizeVRAM {
+			processLabel = "100% GPU"
+		} else if m.SizeVRAM == 0 {
+			processLabel = "100% CPU"
+		} else {
+			percentageGPU := (float64(m.SizeVRAM) / float64(m.Size)) * 100
+			percentageCPU := 100 - percentageGPU
+			processLabel = fmt.Sprintf("%.0f%% GPU / %.0f%% CPU", percentageGPU, percentageCPU)
+		}
+
+		humanSize := format.HumanBytes(m.Size)
+		expiresAt := format.HumanTime(m.ExpiresAt, "Never")
+
+		modelData = append(modelData, []string{
+			m.Model,      // Model
+			humanSize,    // Size
+			processLabel, // Process
+			expiresAt,    // Expires At
+		})
+	}
+
+	// Create the table widget
+	table := widget.NewTable(
+		func() (int, int) {
+			return len(modelData), len(modelData[0]) // Total rows and columns
+		},
+		func() fyne.CanvasObject {
+			// Template for a single cell
+			return widget.NewLabel("")
+		},
+		func(id widget.TableCellID, cell fyne.CanvasObject) {
+			label := cell.(*widget.Label)
+			label.SetText(modelData[id.Row][id.Col])
+
+			// Style the header row
+			if id.Row == 0 {
+				label.TextStyle = fyne.TextStyle{Bold: true}
+			}
+		},
+	)
+
+	// Set uniform column widths for better alignment
+	table.SetColumnWidth(0, 250) // Model
+	table.SetColumnWidth(1, 150) // Size
+	table.SetColumnWidth(2, 150) // Size VRAM
+	table.SetColumnWidth(3, 150) // Expires At
+
+	// Wrap the table in a scroll container
+	scroll := container.NewVScroll(table)
+	scroll.SetMinSize(fyne.NewSize(800, 100)) // Minimum size for table container
+
+	// Add a heading above the table
+	heading := widget.NewLabel("Running Models")
+	heading.TextStyle = fyne.TextStyle{Bold: true}
+
+	// Use a Border layout to position the heading and table
+	content := container.NewBorder(
+		heading, // top
+		nil,     // bottom
+		nil,     // left
+		nil,     // right
+		scroll,  // center
+	)
+
+	// Create a new window for the table
+	modelWindow := myApp.NewWindow("Running Models")
+	modelWindow.SetContent(content)
+	modelWindow.Resize(fyne.NewSize(900, 200)) // Adjust the window size for better layout
+	modelWindow.Show()
 }
 
 // createMenuBar creates the top menubar with various options (Theme toggle, About, etc.).
@@ -162,42 +440,77 @@ func createMenuBar() {
 		setTheme(isDark)
 	})
 
-	// Construct the main menu
-	menu := fyne.NewMainMenu(
-		fyne.NewMenu("Settings",
-			fyne.NewMenuItem("Preferences", func() {
-				dialog.ShowInformation("Preferences", "Settings menu under construction.", myWindow)
-			}),
-			fyne.NewMenuItem("About", func() {
-				dialog.ShowInformation("About", "Ollama Chat App Version 1.0", myWindow)
-			}),
-		),
-		fyne.NewMenu("Models",
-			fyne.NewMenuItem("Models", func() {
-				dialog.ShowInformation("View Models", "Feature to view and edit models will be added.", myWindow)
-			}),
-			fyne.NewMenuItem("Download Model", func() {
-				dialog.ShowInformation("Download Model", "Feature to download models will be added.", myWindow)
-			}),
-		),
-		fyne.NewMenu("Tools",
-			fyne.NewMenuItem("Tools", func() {
-				dialog.ShowInformation("Tools", "Tools coming soon.", myWindow)
-			}),
-			fyne.NewMenuItem("Create Tool", func() {
-				dialog.ShowInformation("Create Tool", "Create Tool Feature coming soon.", myWindow)
-			}),
-			fyne.NewMenuItem("Built in Tools", func() {
-				dialog.ShowInformation("Built in Tools", "Built in tools will be added.", myWindow)
-			}),
-			fyne.NewMenuItem("Export Chat", func() {
-				dialog.ShowInformation("Export Chat", "Export functionality will be added.", myWindow)
-			}),
-		),
-		fyne.NewMenu("Theme", themeToggle),
+	// Construct each top-level menu
+	settingsMenu := fyne.NewMenu("Settings",
+		fyne.NewMenuItem("Preferences", func() {
+			dialog.ShowInformation("Preferences", "Settings menu under construction.", myWindow)
+		}),
+		fyne.NewMenuItem("About", func() {
+			dialog.ShowInformation("About", "Ollama Chat App Version 1.0", myWindow)
+		}),
 	)
 
-	myWindow.SetMainMenu(menu)
+	modelsMenu := fyne.NewMenu("Models",
+		fyne.NewMenuItem("Downloaded Models", func() {
+			displayModelList()
+		}),
+		fyne.NewMenuItem("Running Models", func() {
+			displayRunningModels()
+		}),
+		fyne.NewMenuItem("Download Model", func() {
+			dialog.ShowInformation("Download Model", "Feature to download models will be added.", myWindow)
+		}),
+	)
+
+	toolsMenu := fyne.NewMenu("Tools",
+		fyne.NewMenuItem("Tools", func() {
+			dialog.ShowInformation("Tools", "Tools coming soon.", myWindow)
+		}),
+		fyne.NewMenuItem("Create Tool", func() {
+			dialog.ShowInformation("Create Tool", "Create Tool Feature coming soon.", myWindow)
+		}),
+		fyne.NewMenuItem("Built in Tools", func() {
+			dialog.ShowInformation("Built in Tools", "Built in tools will be added.", myWindow)
+		}),
+		fyne.NewMenuItem("Export Chat", func() {
+			dialog.ShowInformation("Export Chat", "Export functionality will be added.", myWindow)
+		}),
+	)
+
+	//-------------------------------------------------------------------
+	// NEW: "Search" menu placeholder between Tools and Theme
+	//-------------------------------------------------------------------
+	// Show current model and a few placeholder “downloaded models”
+	searchMenu := fyne.NewMenu("Search",
+		fyne.NewMenuItem(fmt.Sprintf("Current Model: %s", defaultModel), func() {
+			// In a future version, this could pop up a dialog or do nothing
+		}),
+		fyne.NewMenuItemSeparator(),
+		fyne.NewMenuItem("Downloaded Models:", func() {
+			// Placeholder - could also open a list dialog
+		}),
+		fyne.NewMenuItem("model2", func() {
+			dialog.ShowInformation("Switch Model", "Switching to model2 (placeholder)", myWindow)
+		}),
+		fyne.NewMenuItem("model3", func() {
+			dialog.ShowInformation("Switch Model", "Switching to model3 (placeholder)", myWindow)
+		}),
+	)
+
+	themeMenu := fyne.NewMenu("Theme", themeToggle)
+
+	mainMenu := fyne.NewMainMenu(
+		settingsMenu,
+		modelsMenu,
+		toolsMenu,
+		// Insert our "Search" menu right after Tools:
+		searchMenu,
+		// Finally the Theme menu
+		themeMenu,
+	)
+
+	// Apply the constructed main menu
+	myWindow.SetMainMenu(mainMenu)
 }
 
 // rebuildChatHistory clears and rebuilds the scrollable chat UI from the chatData binding.

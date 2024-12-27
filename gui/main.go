@@ -1,4 +1,4 @@
-// gui.go
+// main.go
 package main
 
 import "log"

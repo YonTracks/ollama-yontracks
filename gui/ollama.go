@@ -25,6 +25,7 @@ func handleUserMessage() {
 	// The UI (e.g., a call to updateSidebar()) can happen if desired
 }
 
+// TODO: Possibley DRY up the api client creation logic throughout.
 // streamFromOllama streams partial responses from the Ollama model and updates the chat UI in real-time.
 func streamFromOllama() error {
 	// 1) Create a new Ollama client from environment variables/config
@@ -50,7 +51,7 @@ func streamFromOllama() error {
 
 	// 3) Build a ChatRequest with the entire conversation
 	req := &api.ChatRequest{
-		Model:    modelName,
+		Model:    defaultModel,
 		Messages: messages,
 	}
 
