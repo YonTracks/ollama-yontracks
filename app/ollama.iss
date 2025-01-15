@@ -70,8 +70,7 @@ DisableReadyPage=yes
 DisableStartupPrompt=yes
 DisableWelcomePage=yes
 
-; TODO - percentage can't be set less than 100, so how to make it shorter?
-; WizardSizePercent=100,80
+WizardSizePercent=100
 
 #if GetEnv("KEY_CONTAINER")
 SignTool=MySignTool
@@ -84,7 +83,7 @@ SetupMutex=OllamaSetupMutex
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [LangOptions]
-DialogFontSize=12
+DialogFontSize=8
 
 [Files]
 #if DirExists("..\dist\windows-amd64")
