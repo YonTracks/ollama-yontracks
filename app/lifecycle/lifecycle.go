@@ -47,6 +47,10 @@ func Run() {
 				}
 			case <-callbacks.ShowLogs:
 				ShowLogs()
+			case <-callbacks.ShowSettings:
+				ShowSettings()
+			case <-callbacks.ShowGui:
+				ShowGui()
 			case <-callbacks.DoFirstUse:
 				err := GetStarted()
 				if err != nil {
@@ -82,7 +86,7 @@ func Run() {
 		}
 	}
 
-	StartBackgroundUpdaterChecker(ctx, t.UpdateAvailable)
+	// StartBackgroundUpdaterChecker(ctx, t.UpdateAvailable)
 
 	t.Run()
 	cancel()

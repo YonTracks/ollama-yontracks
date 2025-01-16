@@ -70,8 +70,7 @@ DisableReadyPage=yes
 DisableStartupPrompt=yes
 DisableWelcomePage=yes
 
-; TODO - percentage can't be set less than 100, so how to make it shorter?
-; WizardSizePercent=100,80
+WizardSizePercent=100
 
 #if GetEnv("KEY_CONTAINER")
 SignTool=MySignTool
@@ -84,7 +83,7 @@ SetupMutex=OllamaSetupMutex
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [LangOptions]
-DialogFontSize=12
+DialogFontSize=8
 
 [Files]
 #if DirExists("..\dist\windows-amd64")
@@ -101,6 +100,15 @@ Source: "..\dist\windows-arm64\ollama.exe"; DestDir: "{app}"; Check: IsArm64(); 
 
 Source: "..\dist\ollama_welcome.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: ".\assets\app.ico"; DestDir: "{app}"; Flags: ignoreversion
+
+
+#if FileExists("..\gui\ollama_chats.db")
+Source: "..\gui\ollama_chats.db"; DestDir: "{app}"; Flags: ignoreversion
+#endif
+
+#if FileExists("..\gui\DemoGUI.exe")
+Source: "..\gui\DemoGUI.exe"; DestDir: "{app}"; Flags: ignoreversion
+#endif
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\app.ico"
