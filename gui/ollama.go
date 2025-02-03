@@ -5,41 +5,63 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/ollama/ollama/api"
 )
 
-// Assistant response tracking in global variables (for partial streaming updates).
+// Global variables for assistant response state
 var (
 	assistantIndex          = -1
 	assistantMessageBuilder strings.Builder
 )
 
-// handleUserMessage streams a response from Ollama (the LLM) based on the conversation so far.
+// Mutex and timer for throttling UI updates
+var (
+	updateMutex sync.Mutex
+	updateTimer *time.Timer
+	updateDelay = 50 * time.Millisecond // Adjust as needed
+)
+
+// scheduleUIUpdate throttles UI updates to at most once per updateDelay.
+func scheduleUIUpdate() {
+	updateMutex.Lock()
+	defer updateMutex.Unlock()
+
+	if updateTimer != nil {
+		return
+	}
+
+	updateTimer = time.AfterFunc(updateDelay, func() {
+		rebuildChatHistory()
+		scroll.ScrollToBottom()
+		updateMutex.Lock()
+		updateTimer = nil
+		updateMutex.Unlock()
+	})
+}
+
+// handleUserMessage streams a response from Ollama based on the conversation so far.
 func handleUserMessage() {
 	if err := streamFromOllama(); err != nil {
-		// Show an error in the chat
 		updateChatData("assistant: Error: " + fmt.Sprintf("%v", err))
 	}
 	saveCurrentChat()
-	// The UI (e.g., a call to updateSidebar()) can happen if desired
+	// Optionally, update the UI further (for example, refresh a sidebar)
 }
 
-// TODO: Possibley DRY up the api client creation logic throughout.
-// streamFromOllama streams partial responses from the Ollama model and updates the chat UI in real-time.
+// streamFromOllama streams partial responses from the Ollama model and updates the chat UI in real–time.
 func streamFromOllama() error {
-	// 1) Create a new Ollama client from environment variables/config
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return fmt.Errorf("failed to create Ollama API client: %w", err)
 	}
 
-	// 2) Gather the entire conversation from chatData
 	items, _ := chatData.Get()
 	var messages []api.Message
 	for _, line := range items {
 		role, content := parseRoleAndContent(line)
-		// Normalize role to system/user/assistant
 		if role != "user" && role != "assistant" && role != "system" {
 			role = "system"
 		}
@@ -49,7 +71,6 @@ func streamFromOllama() error {
 		})
 	}
 
-	// 3) Build a ChatRequest with the entire conversation
 	req := &api.ChatRequest{
 		Model:    defaultModel,
 		Messages: messages,
@@ -58,41 +79,38 @@ func streamFromOllama() error {
 	assistantMessageBuilder.Reset()
 	assistantIndex = -1
 
-	// 4) Define how to handle each partial response from Ollama
+	// Use a context with timeout to avoid hanging requests.
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
 	respFunc := func(resp api.ChatResponse) error {
 		assistantMessageBuilder.WriteString(resp.Message.Content)
-
-		items, _ := chatData.Get()
+		currentItems, _ := chatData.Get()
 
 		if assistantIndex == -1 {
-			// First chunk
 			newLine := "assistant: " + assistantMessageBuilder.String()
-			chatData.Set(append(items, newLine))
-			assistantIndex = len(items) // zero-based index for appended line
+			currentItems = append(currentItems, newLine)
+			chatData.Set(currentItems)
+			assistantIndex = len(currentItems) - 1
 		} else {
-			// Subsequent chunks
-			items, _ := chatData.Get()
-			if assistantIndex < len(items) {
+			currentItems, _ = chatData.Get()
+			if assistantIndex < len(currentItems) {
 				updatedLine := "assistant: " + assistantMessageBuilder.String()
-				items[assistantIndex] = updatedLine
-				chatData.Set(items)
-				rebuildChatHistory()
-				scroll.ScrollToBottom()
+				currentItems[assistantIndex] = updatedLine
+				chatData.Set(currentItems)
 			}
 		}
 
-		// If streaming is done, you could handle final actions here:
 		if resp.Done {
 			assistantMessageBuilder.Reset()
 			assistantIndex = -1
-			rebuildChatHistory()
-			scroll.ScrollToBottom()
 		}
+
+		scheduleUIUpdate()
 		return nil
 	}
 
-	// 5) Send the conversation to Ollama and stream responses
-	if err := client.Chat(context.Background(), req, respFunc); err != nil {
+	if err := client.Chat(ctx, req, respFunc); err != nil {
 		return fmt.Errorf("error in Ollama chat request: %w", err)
 	}
 

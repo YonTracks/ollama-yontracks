@@ -24,37 +24,35 @@ import (
 	"github.com/ollama/ollama/format"
 )
 
-// Constants used throughout the code
 const (
 	defaultModel = "llama3.1"       // Example model name for Ollama
-	httpTimeout  = 30 * time.Second // Example timeout for HTTP requests
-	appIconPath  = "app.ico"        // Path to the application icon
+	httpTimeout  = 30 * time.Second // HTTP timeout for API calls
+	appIconPath  = "app.ico"        // Application icon path
+	sidebarRatio = 0.2              // Sidebar occupies 20% of width
 )
 
-// Global variables to hold the application state (could be in a struct).
 var (
-	myApp         fyne.App           // The main Fyne app instance
-	myWindow      fyne.Window        // The main window
-	chatData      binding.StringList // Binding for chat messages
-	scroll        *container.Scroll  // Scroll container for chat history
-	currentChatID int                // Tracks which chat is currently active
+	currentModel  = defaultModel
+	myApp         fyne.App
+	myWindow      fyne.Window
+	chatData      binding.StringList
+	scroll        *container.Scroll
+	currentChatID int
 )
 
-// initializeApp sets up the main Fyne application window and loads or creates the initial chat.
+// initializeApp sets up the main Fyne application window.
 func initializeApp() {
 	myApp = app.NewWithID("ollama.gui")
 	myWindow = myApp.NewWindow("Ollama GUI")
 
-	// Attempt to load an application icon
-	appIcon := loadAppIcon(appIconPath)
-	if appIcon != nil {
-		myWindow.SetIcon(appIcon)
+	if icon := loadAppIcon(appIconPath); icon != nil {
+		myWindow.SetIcon(icon)
 	}
 
-	createMenuBar() // Create the main menu bar
+	logLifecycle(myApp)
+	createMenuBar()
 
 	chatData = binding.NewStringList()
-
 	ensureInitialChat()
 	buildUI()
 
@@ -63,16 +61,14 @@ func initializeApp() {
 	myWindow.ShowAndRun()
 }
 
-// ensureInitialChat checks if DB is empty; if so, creates a "Welcome Chat"
+// ensureInitialChat checks if the DB is empty; if so, creates a "Welcome Chat".
 func ensureInitialChat() {
 	var chatCount int
-	err := db.QueryRow("SELECT COUNT(*) FROM chats").Scan(&chatCount)
-	if err != nil {
+	if err := db.QueryRow("SELECT COUNT(*) FROM chats").Scan(&chatCount); err != nil {
 		log.Printf("Failed to count chats: %v", err)
 	}
 
 	if chatCount == 0 {
-		// Insert an initial "Welcome Chat"
 		res, err := db.Exec("INSERT INTO chats (title, hash) VALUES (?, ?)", "Welcome Chat", "")
 		if err != nil {
 			log.Printf("Failed to create initial chat: %v", err)
@@ -81,22 +77,19 @@ func ensureInitialChat() {
 		newID, _ := res.LastInsertId()
 		currentChatID = int(newID)
 
-		// Store a welcome message
-		initialMessage := []string{"assistant: Welcome to the chat!"}
-		chatData.Set(initialMessage)
+		// Include the current model in the welcome message
+		chatData.Set([]string{"assistant: Welcome to the chat! Current model: " + currentModel})
 		saveCurrentChat()
 	} else {
-		// Otherwise, load the first chat found in the DB
 		var firstChatID int
-		err := db.QueryRow("SELECT id FROM chats ORDER BY id LIMIT 1").Scan(&firstChatID)
-		if err == nil {
+		if err := db.QueryRow("SELECT id FROM chats ORDER BY id LIMIT 1").Scan(&firstChatID); err == nil {
 			currentChatID = firstChatID
 			loadChatHistory(firstChatID)
 		}
 	}
 }
 
-// buildUI constructs the main UI layout with a sidebar list and chat pane.
+// buildUI constructs the main UI layout.
 func buildUI() {
 	chatsList, err := loadChatList()
 	if err != nil {
@@ -104,9 +97,8 @@ func buildUI() {
 		return
 	}
 
-	// Build the sidebar
 	serverList := widget.NewList(
-		func() int { return len(chatsList) + 1 }, // +1 for "New Chat"
+		func() int { return len(chatsList) + 1 },
 		func() fyne.CanvasObject {
 			label := widget.NewLabel("")
 			deleteButton := widget.NewButtonWithIcon("", theme.DeleteIcon(), nil)
@@ -138,7 +130,7 @@ func buildUI() {
 						dialog.ShowError(err, myWindow)
 						return
 					}
-					updateSidebar() // Refresh the sidebar after deletion
+					updateSidebar()
 				}
 			}
 		},
@@ -153,17 +145,11 @@ func buildUI() {
 	}
 
 	mainUI := makeMainUI(serverList)
-	finalContent := container.NewBorder(
-		nil,    // top
-		nil,    // bottom
-		nil,    // left
-		nil,    // right
-		mainUI, // center
-	)
-
+	finalContent := container.NewBorder(nil, nil, nil, nil, mainUI)
 	myWindow.SetContent(finalContent)
 }
 
+// displayModelList shows a list of downloaded models in a new window.
 func displayModelList() {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
@@ -171,7 +157,9 @@ func displayModelList() {
 		return
 	}
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), httpTimeout)
+	defer cancel()
+
 	models, err := client.List(ctx)
 	if err != nil {
 		dialog.ShowError(err, myWindow)
@@ -183,90 +171,60 @@ func displayModelList() {
 		return
 	}
 
-	// Build table data with headers
 	modelData := [][]string{
-		{"Name", "Model", "Modified At", "Size", "Digest" /*"Details"*/}, // Headers
+		{"Name", "Model", "Modified At", "Size", "Digest"},
 	}
 
-	// Populate the table data
 	for _, m := range models.Models {
-		// Extract the part before the first ":" in the name
 		trimmedName := m.Name
 		if idx := strings.Index(m.Name, ":"); idx != -1 {
-			trimmedName = m.Name[:idx] // Extract the substring before ":"
+			trimmedName = m.Name[:idx]
 		}
-
-		// Limit to 16 characters and truncate if necessary
 		if len(trimmedName) > 16 {
-			trimmedName = trimmedName[:15] + "…" // Truncate and add an ellipsis
+			trimmedName = trimmedName[:15] + "…"
 		}
-
 		humanTime := format.HumanTime(m.ModifiedAt, "Unknown")
 		humanSize := format.HumanBytes(m.Size)
-		// details := fmt.Sprintf("Family: %s, Parent: %s", m.Details.Family, m.Details.ParentModel)
-
 		modelData = append(modelData, []string{
-			trimmedName, // Use the trimmed and truncated name
+			trimmedName,
 			m.Model,
 			humanTime,
 			humanSize,
 			m.Digest,
-			// details,
 		})
 	}
 
-	// Create the table widget
 	table := widget.NewTable(
-		func() (int, int) {
-			return len(modelData), len(modelData[0]) // Total rows and columns
-		},
-		func() fyne.CanvasObject {
-			// Template for a single cell
-			return widget.NewLabel("")
-		},
+		func() (int, int) { return len(modelData), len(modelData[0]) },
+		func() fyne.CanvasObject { return widget.NewLabel("") },
 		func(id widget.TableCellID, cell fyne.CanvasObject) {
 			label := cell.(*widget.Label)
 			label.SetText(modelData[id.Row][id.Col])
-
-			// Style the header row
 			if id.Row == 0 {
 				label.TextStyle = fyne.TextStyle{Bold: true}
 			}
 		},
 	)
+	table.SetColumnWidth(0, 200)
+	table.SetColumnWidth(1, 350)
+	table.SetColumnWidth(2, 150)
+	table.SetColumnWidth(3, 100)
+	table.SetColumnWidth(4, 450)
 
-	// Set uniform column widths for better alignment
-	table.SetColumnWidth(0, 200) // Name
-	table.SetColumnWidth(1, 350) // Model
-	table.SetColumnWidth(2, 150) // Modified At
-	table.SetColumnWidth(3, 100) // Size
-	table.SetColumnWidth(4, 450) // Digest
-	// table.SetColumnWidth(5, 450) // Details
-
-	// Wrap the table in a scroll container
 	scroll := container.NewVScroll(table)
-	scroll.SetMinSize(fyne.NewSize(900, 400)) // Minimum size for table container
+	scroll.SetMinSize(fyne.NewSize(900, 400))
 
-	// Add a heading above the table
 	heading := widget.NewLabel("Downloaded Models")
 	heading.TextStyle = fyne.TextStyle{Bold: true}
 
-	// Use a Border layout to position the heading and table
-	content := container.NewBorder(
-		heading, // top
-		nil,     // bottom
-		nil,     // left
-		nil,     // right
-		scroll,  // center
-	)
-
-	// Create a new window for the table
+	content := container.NewBorder(heading, nil, nil, nil, scroll)
 	modelWindow := myApp.NewWindow("Model List")
 	modelWindow.SetContent(content)
-	modelWindow.Resize(fyne.NewSize(1000, 600)) // Adjust the window size for better layout
+	modelWindow.Resize(fyne.NewSize(1000, 600))
 	modelWindow.Show()
 }
 
+// displayRunningModels shows a list of running models.
 func displayRunningModels() {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
@@ -274,7 +232,9 @@ func displayRunningModels() {
 		return
 	}
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), httpTimeout)
+	defer cancel()
+
 	runningModels, err := client.ListRunning(ctx)
 	if err != nil {
 		dialog.ShowError(err, myWindow)
@@ -286,25 +246,18 @@ func displayRunningModels() {
 		return
 	}
 
-	// Build table data with headers
 	modelData := [][]string{
-		{"Model", "Size", "Process", "Expires At"}, // Headers
+		{"Model", "Size", "Process", "Expires At"},
 	}
 
-	// Populate the table data
 	for _, m := range runningModels.Models {
-		// Extract the part before the first ":" in the name
 		trimmedName := m.Name
 		if idx := strings.Index(m.Name, ":"); idx != -1 {
-			trimmedName = m.Name[:idx] // Extract the substring before ":"
+			trimmedName = m.Name[:idx]
 		}
-
-		// Limit to 16 characters and truncate if necessary
 		if len(trimmedName) > 16 {
-			trimmedName = trimmedName[:15] + "…" // Truncate and add an ellipsis
+			trimmedName = trimmedName[:15] + "…"
 		}
-
-		// Calculate the process type
 		var processLabel string
 		if m.Size == m.SizeVRAM {
 			processLabel = "100% GPU"
@@ -315,69 +268,46 @@ func displayRunningModels() {
 			percentageCPU := 100 - percentageGPU
 			processLabel = fmt.Sprintf("%.0f%% GPU / %.0f%% CPU", percentageGPU, percentageCPU)
 		}
-
 		humanSize := format.HumanBytes(m.Size)
 		expiresAt := format.HumanTime(m.ExpiresAt, "Never")
-
 		modelData = append(modelData, []string{
-			m.Model,      // Model
-			humanSize,    // Size
-			processLabel, // Process
-			expiresAt,    // Expires At
+			m.Model,
+			humanSize,
+			processLabel,
+			expiresAt,
 		})
 	}
 
-	// Create the table widget
 	table := widget.NewTable(
-		func() (int, int) {
-			return len(modelData), len(modelData[0]) // Total rows and columns
-		},
-		func() fyne.CanvasObject {
-			// Template for a single cell
-			return widget.NewLabel("")
-		},
+		func() (int, int) { return len(modelData), len(modelData[0]) },
+		func() fyne.CanvasObject { return widget.NewLabel("") },
 		func(id widget.TableCellID, cell fyne.CanvasObject) {
 			label := cell.(*widget.Label)
 			label.SetText(modelData[id.Row][id.Col])
-
-			// Style the header row
 			if id.Row == 0 {
 				label.TextStyle = fyne.TextStyle{Bold: true}
 			}
 		},
 	)
+	table.SetColumnWidth(0, 250)
+	table.SetColumnWidth(1, 150)
+	table.SetColumnWidth(2, 150)
+	table.SetColumnWidth(3, 150)
 
-	// Set uniform column widths for better alignment
-	table.SetColumnWidth(0, 250) // Model
-	table.SetColumnWidth(1, 150) // Size
-	table.SetColumnWidth(2, 150) // Size VRAM
-	table.SetColumnWidth(3, 150) // Expires At
-
-	// Wrap the table in a scroll container
 	scroll := container.NewVScroll(table)
-	scroll.SetMinSize(fyne.NewSize(800, 100)) // Minimum size for table container
+	scroll.SetMinSize(fyne.NewSize(800, 100))
 
-	// Add a heading above the table
 	heading := widget.NewLabel("Running Models")
 	heading.TextStyle = fyne.TextStyle{Bold: true}
 
-	// Use a Border layout to position the heading and table
-	content := container.NewBorder(
-		heading, // top
-		nil,     // bottom
-		nil,     // left
-		nil,     // right
-		scroll,  // center
-	)
-
-	// Create a new window for the table
+	content := container.NewBorder(heading, nil, nil, nil, scroll)
 	modelWindow := myApp.NewWindow("Running Models")
 	modelWindow.SetContent(content)
-	modelWindow.Resize(fyne.NewSize(900, 200)) // Adjust the window size for better layout
+	modelWindow.Resize(fyne.NewSize(900, 200))
 	modelWindow.Show()
 }
 
-// createMenuBar creates the top menubar with various options (Theme toggle, About, etc.).
+// createMenuBar constructs the top menu bar.
 func createMenuBar() {
 	themeToggle := fyne.NewMenuItem("Toggle Theme", func() {
 		pref := myApp.Preferences()
@@ -386,7 +316,6 @@ func createMenuBar() {
 		setTheme(isDark)
 	})
 
-	// Construct each top-level menu
 	settingsMenu := fyne.NewMenu("Settings",
 		fyne.NewMenuItem("Preferences", func() {
 			dialog.ShowInformation("Preferences", "Settings menu under construction.", myWindow)
@@ -395,19 +324,13 @@ func createMenuBar() {
 			dialog.ShowInformation("About", "Ollama Chat App Version 1.0", myWindow)
 		}),
 	)
-
 	modelsMenu := fyne.NewMenu("Models",
-		fyne.NewMenuItem("Downloaded Models", func() {
-			displayModelList()
-		}),
-		fyne.NewMenuItem("Running Models", func() {
-			displayRunningModels()
-		}),
+		fyne.NewMenuItem("Downloaded Models", displayModelList),
+		fyne.NewMenuItem("Running Models", displayRunningModels),
 		fyne.NewMenuItem("Download Model", func() {
 			dialog.ShowInformation("Download Model", "Feature to download models will be added.", myWindow)
 		}),
 	)
-
 	toolsMenu := fyne.NewMenu("Tools",
 		fyne.NewMenuItem("Tools", func() {
 			dialog.ShowInformation("Tools", "Tools coming soon.", myWindow)
@@ -422,43 +345,22 @@ func createMenuBar() {
 			dialog.ShowInformation("Export Chat", "Export functionality will be added.", myWindow)
 		}),
 	)
-
-	//-------------------------------------------------------------------
-	// NEW: "Search" menu placeholder between Tools and Theme
-	//-------------------------------------------------------------------
-	// Show current model and a few placeholder “downloaded models”
 	searchMenu := fyne.NewMenu("Search",
-		fyne.NewMenuItem(fmt.Sprintf("Current Model: %s", defaultModel), func() {
-			// In a future version, this could pop up a dialog or do nothing
-		}),
+		fyne.NewMenuItem(fmt.Sprintf("Current Model: %s", defaultModel), func() {}),
 		fyne.NewMenuItemSeparator(),
-		fyne.NewMenuItem("Downloaded Models:", func() {
-			// Placeholder - could also open a list dialog
-		}),
-		fyne.NewMenuItem("model2", func() {
-			dialog.ShowInformation("Switch Model", "Switching to model2 (placeholder)", myWindow)
-		}),
-		fyne.NewMenuItem("model3", func() {
-			dialog.ShowInformation("Switch Model", "Switching to model3 (placeholder)", myWindow)
-		}),
 	)
 	themeMenu := fyne.NewMenu("Theme", themeToggle)
-
 	mainMenu := fyne.NewMainMenu(
 		settingsMenu,
 		modelsMenu,
 		toolsMenu,
-		// Insert our "Search" menu right after Tools:
 		searchMenu,
-		// Finally the Theme menu
 		themeMenu,
 	)
-
-	// Apply the constructed main menu
 	myWindow.SetMainMenu(mainMenu)
 }
 
-// rebuildChatHistory clears and rebuilds the scrollable chat UI from the chatData binding.
+// rebuildChatHistory rebuilds the scrollable chat UI from chatData.
 func rebuildChatHistory() {
 	chatContent := scroll.Content.(*fyne.Container)
 	chatContent.Objects = nil
@@ -466,33 +368,24 @@ func rebuildChatHistory() {
 	items, _ := chatData.Get()
 	for _, message := range items {
 		role, content := parseRoleAndContent(message)
-		isUser := (role == "user")
-
 		if role == "user" || role == "assistant" {
-			chatContent.Add(createChatBubble(content, isUser))
+			chatContent.Add(createChatBubble(content, role == "user"))
 		}
 	}
-	scroll.ScrollToBottom()
 }
 
-// makeMainUI sets up the main horizontal split: left sidebar (chat list) and right panel (chat history + input).
+// makeMainUI sets up the main horizontal split between the sidebar and the chat pane.
 func makeMainUI(serverList *widget.List) fyne.CanvasObject {
 	chatHistory := createChatHistory()
-
-	// Create the message input field, the upload button, and the send button
 	messageInput, uploadButton, sendButton := createInputComponents()
-
-	// Lay out the input components along the bottom
 	inputContainer := container.NewBorder(nil, nil, uploadButton, sendButton, messageInput)
 	messagePane := container.NewBorder(nil, inputContainer, nil, nil, chatHistory)
-
-	// Split layout: left panel (serverList) and right panel (messagePane)
 	mainContent := container.NewHSplit(serverList, messagePane)
-	mainContent.SetOffset(0.2) // 20% for the sidebar, 80% for the chat content
+	mainContent.SetOffset(sidebarRatio)
 	return mainContent
 }
 
-// setTheme switches between dark and light mode for the app.
+// setTheme toggles between dark and light mode.
 func setTheme(isDark bool) {
 	if isDark {
 		myApp.Settings().SetTheme(theme.DarkTheme())
@@ -501,39 +394,28 @@ func setTheme(isDark bool) {
 	}
 }
 
-// createChatHistory builds a scrollable container that displays all messages in chatData.
+// createChatHistory builds a scrollable container that displays chatData.
 func createChatHistory() *fyne.Container {
 	chatContent := container.NewVBox()
 	scroll = container.NewVScroll(chatContent)
 	scroll.SetMinSize(fyne.NewSize(300, 400))
 
-	var displayedItems []string // local copy to detect changes
+	var displayedItems []string
 
-	// When chatData changes, update the UI
 	chatData.AddListener(binding.NewDataListener(func() {
 		newItems, _ := chatData.Get()
-
-		// If we have more items than previously, append the new ones
 		for i := len(displayedItems); i < len(newItems); i++ {
 			role, content := parseRoleAndContent(newItems[i])
-			isUser := (role == "user")
-			bubble := createChatBubble(content, isUser)
-			chatContent.Add(bubble)
+			chatContent.Add(createChatBubble(content, role == "user"))
 		}
-
-		// If any item was modified in place, refresh that bubble
 		minLen := min(len(displayedItems), len(newItems))
 		for i := 0; i < minLen; i++ {
 			if newItems[i] != displayedItems[i] {
 				role, content := parseRoleAndContent(newItems[i])
-				isUser := (role == "user")
-				chatContent.Objects[i] = createChatBubble(content, isUser)
+				chatContent.Objects[i] = createChatBubble(content, role == "user")
 			}
 		}
-
 		displayedItems = newItems
-
-		// Scroll to bottom if new messages are appended
 		if len(newItems) > 0 {
 			scroll.ScrollToBottom()
 		}
@@ -542,59 +424,47 @@ func createChatHistory() *fyne.Container {
 	return container.New(layout.NewStackLayout(), scroll)
 }
 
-// parseRoleAndContent splits a message string into role ("user", "assistant", or "system") and content.
+// parseRoleAndContent splits a message string into role and content.
 func parseRoleAndContent(line string) (string, string) {
 	parts := strings.SplitN(line, ":", 2)
 	if len(parts) != 2 {
-		// Default to "system" if no explicit role is found
 		return "system", line
 	}
-	role := strings.TrimSpace(parts[0])
-	content := strings.TrimSpace(parts[1])
-	return role, content
+	return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
 }
 
 // createChatBubble generates the UI for a single chat message bubble.
 func createChatBubble(message string, isUser bool) *fyne.Container {
 	label := widget.NewLabel(message)
 	label.Wrapping = fyne.TextWrapWord
-
-	// Use a stack container so we can have a background rectangle behind the text
-	bubble := container.NewStack(
-		canvasWithBackgroundAndCenteredInput(label, isUser),
-	)
-
-	// If user message, place it on the right; otherwise on the left
+	bubble := container.NewStack(canvasWithBackgroundAndCenteredInput(label, isUser))
 	if isUser {
 		return container.NewHBox(layout.NewSpacer(), bubble)
-	} else {
-		return container.NewHBox(bubble, layout.NewSpacer())
 	}
+	return container.NewHBox(bubble, layout.NewSpacer())
 }
 
-// canvasWithBackgroundAndCenteredInput creates a rounded rectangle behind the text.
+// canvasWithBackgroundAndCenteredInput creates a rounded rectangle background for a chat bubble.
 func canvasWithBackgroundAndCenteredInput(content fyne.CanvasObject, isUser bool) fyne.CanvasObject {
 	var bgColor color.Color
 	if isUser {
-		bgColor = color.Gray{Y: 128} // Gray color for the user background
+		bgColor = color.Gray{Y: 128}
 	} else {
 		bgColor = color.Transparent
 	}
-
 	roundedRect := canvas.NewRectangle(bgColor)
 	roundedRect.SetMinSize(fyne.NewSize(600, content.MinSize().Height+20))
 	roundedRect.StrokeColor = bgColor
 	roundedRect.StrokeWidth = 0
 	roundedRect.CornerRadius = 10
-
 	return centeredContainer(container.NewStack(roundedRect, content))
 }
 
-// centeredContainer horizontally centers the content in a VBox with spacers.
+// centeredContainer horizontally centers the content.
 func centeredContainer(content fyne.CanvasObject) fyne.CanvasObject {
 	return container.NewVBox(
 		layout.NewSpacer(),
-		container.New(layout.NewCenterLayout(), container.NewStack(content)),
+		container.New(layout.NewCenterLayout(), content),
 		layout.NewSpacer(),
 	)
 }
@@ -617,36 +487,28 @@ func createInputComponents() (*widget.Entry, *widget.Button, *widget.Button) {
 		}
 	}
 
-	messageInput.OnSubmitted = func(content string) {
-		sendMessage()
-	}
-
+	messageInput.OnSubmitted = func(content string) { sendMessage() }
 	uploadButton := widget.NewButton("+", func() {
 		dialog.ShowInformation("File Upload", "Feature to upload files will be added.", myWindow)
 	})
-
 	sendButton := widget.NewButton("Send", sendMessage)
 
 	return messageInput, uploadButton, sendButton
 }
 
-// updateChatData appends a new message to the chatData binding.
+// updateChatData appends a new message to chatData.
 func updateChatData(message string) {
 	items, _ := chatData.Get()
 	chatData.Set(append(items, message))
 	scroll.ScrollToBottom()
 }
 
-// updateSidebar refreshes the list of chats on the sidebar (left panel).
+// updateSidebar refreshes the sidebar UI.
 func updateSidebar() {
 	buildUI()
 }
 
-// handleNewChatClick:
-// 1. Saves the current chat (if any)
-// 2. Creates a brand-new chat record in the DB
-// 3. Sets chatData to have an initial welcome message from the assistant
-// 4. Refreshes the sidebar
+// handleNewChatClick creates a new chat.
 func handleNewChatClick() {
 	saveCurrentChat()
 
@@ -667,23 +529,22 @@ func handleNewChatClick() {
 	newID, _ := res.LastInsertId()
 	currentChatID = int(newID)
 
-	chatData.Set([]string{"assistant: Welcome to your new chat!"})
+	// Show the current model in the welcome message
+	chatData.Set([]string{"assistant: Welcome to your new chat! Current model: " + currentModel})
 	saveCurrentChat()
 
 	// Refresh the UI
 	updateSidebar()
 }
 
-// handleSavedChatClick loads an existing chat from the DB.
+// handleSavedChatClick loads an existing chat.
 func handleSavedChatClick(chatID int) {
 	saveCurrentChat()
 	currentChatID = chatID
 	loadChatHistory(chatID)
-	// Refresh the UI
 	updateSidebar()
 }
 
-// min is a small helper to get the smaller of two int values.
 func min(a, b int) int {
 	if a < b {
 		return a
@@ -691,7 +552,7 @@ func min(a, b int) int {
 	return b
 }
 
-// loadAppIcon attempts to load an icon file from the given path and returns a fyne.Resource.
+// loadAppIcon attempts to load an icon file from the given path.
 func loadAppIcon(relativePath string) fyne.Resource {
 	absPath, err := filepath.Abs(relativePath)
 	if err != nil {

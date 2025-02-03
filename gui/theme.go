@@ -1,3 +1,4 @@
+// theme.go
 package main
 
 import (
@@ -8,7 +9,6 @@ import (
 
 type forcedVariant struct {
 	fyne.Theme
-
 	variant fyne.ThemeVariant
 }
 
