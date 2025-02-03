@@ -75,8 +75,8 @@ func makeMainUI(serverList *widget.List) fyne.CanvasObject {
 	return mainContent
 }
 
-// buildUI constructs the main UI layout.
-func buildUI() {
+// makeSidebar constructs the main UI layout.
+func makeSidebar() {
 	chatsList, err := loadChatList()
 	if err != nil {
 		dialog.ShowError(err, myWindow)
@@ -116,7 +116,7 @@ func buildUI() {
 						dialog.ShowError(err, myWindow)
 						return
 					}
-					updateSidebar()
+					makeSidebar()
 				}
 			}
 		},

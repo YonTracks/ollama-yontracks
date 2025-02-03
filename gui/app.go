@@ -50,7 +50,7 @@ func initializeApp() {
 
 	chatData = binding.NewStringList()
 	ensureInitialChat()
-	buildUI()
+	makeSidebar()
 
 	myWindow.CenterOnScreen()
 	myWindow.Resize(fyne.NewSize(800, 600))

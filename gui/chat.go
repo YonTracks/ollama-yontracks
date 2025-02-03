@@ -64,11 +64,6 @@ func updateChatData(message string) {
 	scroll.ScrollToBottom()
 }
 
-// updateSidebar refreshes the sidebar UI.
-func updateSidebar() {
-	buildUI()
-}
-
 // handleNewChatClick creates a new chat.
 func handleNewChatClick() {
 	saveCurrentChat()
@@ -94,8 +89,8 @@ func handleNewChatClick() {
 	chatData.Set([]string{"assistant: Welcome to your new chat! Current model: " + currentModel})
 	saveCurrentChat()
 
-	// Refresh the UI
-	updateSidebar()
+	// Refresh the sidebar
+	makeSidebar()
 }
 
 // parseRoleAndContent splits a message string into role and content.
@@ -109,9 +104,13 @@ func parseRoleAndContent(line string) (string, string) {
 
 // createChatBubble generates the UI for a single chat message bubble.
 func createChatBubble(message string, isUser bool) *fyne.Container {
+
 	label := widget.NewLabel(message)
 	label.Wrapping = fyne.TextWrapWord
-	bubble := container.NewStack(canvasWithBackgroundAndCenteredInput(label, isUser))
+	// Render the message using the markdown renderer to support code blocks.
+	content := renderMarkdown(label.Text)
+
+	bubble := container.NewStack(canvasWithBackgroundAndCenteredInput(content, isUser))
 	if isUser {
 		return container.NewHBox(layout.NewSpacer(), bubble)
 	}
@@ -123,7 +122,7 @@ func handleSavedChatClick(chatID int) {
 	saveCurrentChat()
 	currentChatID = chatID
 	loadChatHistory(chatID)
-	updateSidebar()
+	makeSidebar()
 }
 
 func min(a, b int) int {
