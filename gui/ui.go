@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/cmd/fyne_settings/settings"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/theme"
@@ -22,7 +23,10 @@ func createMenuBar() {
 
 	settingsMenu := fyne.NewMenu("Settings",
 		fyne.NewMenuItem("Preferences", func() {
-			dialog.ShowInformation("Preferences", "Settings menu under construction.", myWindow)
+			w := myApp.NewWindow("Fyne Settings")
+			w.SetContent(settings.NewSettings().LoadAppearanceScreen(w))
+			w.Resize(fyne.NewSize(800, 600))
+			w.Show()
 		}),
 		fyne.NewMenuItem("About", func() {
 			dialog.ShowInformation("About", "Ollama Chat App Version 1.0", myWindow)

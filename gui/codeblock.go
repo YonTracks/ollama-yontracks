@@ -8,6 +8,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
+
 	"fyne.io/fyne/v2/widget"
 )
 
@@ -39,10 +40,12 @@ func renderMarkdown(message string) fyne.CanvasObject {
 			codeLabel := widget.NewLabel(part)
 			codeLabel.Wrapping = fyne.TextWrapWord
 			codeLabel.TextStyle = fyne.TextStyle{Monospace: true}
-			// Create a background rectangle for the code block based on the current theme.
+
 			bg := canvas.NewRectangle(&color.Transparent)
+			// ToDo: update the background based on the current theme. For now, we use a transparent color.
+
 			// Wrap the code label with some padding.
-			codeContainer := container.NewMax(bg, container.NewPadded(codeLabel))
+			codeContainer := container.NewStack(bg, container.NewPadded(codeLabel))
 			objects = append(objects, codeContainer)
 		}
 	}

@@ -108,6 +108,7 @@ func createChatBubble(message string, isUser bool) *fyne.Container {
 	label := widget.NewLabel(message)
 	label.Wrapping = fyne.TextWrapWord
 	// Render the message using the markdown renderer to support code blocks.
+	// Todo: Add support for copying text/code from code blocks and other markdown features.
 	content := renderMarkdown(label.Text)
 
 	bubble := container.NewStack(canvasWithBackgroundAndCenteredInput(content, isUser))
