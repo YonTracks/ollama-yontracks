@@ -17,7 +17,6 @@ import (
 func createChatHistory() *fyne.Container {
 	chatContent := container.NewVBox()
 	scroll = container.NewVScroll(chatContent)
-	scroll.SetMinSize(fyne.NewSize(300, 400))
 
 	var displayedItems []string
 
@@ -35,18 +34,16 @@ func createChatHistory() *fyne.Container {
 			}
 		}
 		displayedItems = newItems
-		if len(newItems) > 0 {
-			scroll.ScrollToBottom()
-		}
+
 	}))
-	scroll.ScrollToBottom()
+
 	return container.New(layout.NewStackLayout(), scroll)
 }
 
 // rebuildChatHistory rebuilds the scrollable chat UI from chatData.
 func rebuildChatHistory() {
 	chatContent := scroll.Content.(*fyne.Container)
-	chatContent.Objects = nil
+	chatContent.Objects = []fyne.CanvasObject{}
 
 	items, _ := chatData.Get()
 	for _, message := range items {
@@ -55,13 +52,14 @@ func rebuildChatHistory() {
 			chatContent.Add(createChatBubble(content, role == "user"))
 		}
 	}
+
 }
 
 // updateChatData appends a new message to chatData.
 func updateChatData(message string) {
 	items, _ := chatData.Get()
 	chatData.Set(append(items, message))
-	scroll.ScrollToBottom()
+
 }
 
 // handleNewChatClick creates a new chat.
@@ -124,6 +122,7 @@ func handleSavedChatClick(chatID int) {
 	currentChatID = chatID
 	loadChatHistory(chatID)
 	makeSidebar()
+	scroll.ScrollToBottom()
 }
 
 func min(a, b int) int {

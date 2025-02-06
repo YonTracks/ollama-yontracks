@@ -98,15 +98,11 @@ func streamFromOllama() error {
 				updatedLine := "assistant: " + assistantMessageBuilder.String()
 				currentItems[assistantIndex] = updatedLine
 				chatData.Set(currentItems)
+
 			}
+			scheduleUIUpdate()
 		}
 
-		if resp.Done {
-			assistantMessageBuilder.Reset()
-			assistantIndex = -1
-		}
-
-		scheduleUIUpdate()
 		return nil
 	}
 
