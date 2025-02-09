@@ -70,8 +70,9 @@ DisableReadyPage=yes
 DisableStartupPrompt=yes
 DisableWelcomePage=yes
 
-; TODO - percentage can't be set less than 100, so how to make it shorter?
-; WizardSizePercent=100,80
+
+; Larger DialogFontSize will auto size the wizard window accordingly.
+WizardSizePercent=100
 
 #if GetEnv("KEY_CONTAINER")
 SignTool=MySignTool
@@ -83,14 +84,20 @@ SetupMutex=OllamaSetupMutex
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
-[LangOptions]
-DialogFontSize=12
+; Larger DialogFontSize will auto size the wizard window accordingly.
+;[LangOptions]
+;DialogFontSize=12
 
 [Files]
 #if DirExists("..\dist\windows-amd64")
 Source: "..\dist\windows-amd64-app.exe"; DestDir: "{app}"; DestName: "{#MyAppExeName}" ;Check: not IsArm64();  Flags: ignoreversion 64bit
 Source: "..\dist\windows-amd64\ollama.exe"; DestDir: "{app}"; Check: not IsArm64(); Flags: ignoreversion 64bit
+;does not seem to hold the required files
 Source: "..\dist\windows-amd64\lib\ollama\*"; DestDir: "{app}\lib\ollama\"; Check: not IsArm64(); Flags: ignoreversion 64bit recursesubdirs
+#endif
+
+#if DirExists("..\build\lib\ollama")
+Source: "..\build\lib\ollama\*"; DestDir: "{app}\lib\ollama\"; Check: not IsArm64(); Flags: ignoreversion 64bit recursesubdirs
 #endif
 
 #if DirExists("..\dist\windows-arm64")
