@@ -85,8 +85,8 @@ SetupMutex=OllamaSetupMutex
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 ; Larger DialogFontSize will auto size the wizard window accordingly.
-;[LangOptions]
-;DialogFontSize=12
+; [LangOptions]
+; DialogFontSize=12
 
 [Files]
 #if DirExists("..\dist\windows-amd64")
