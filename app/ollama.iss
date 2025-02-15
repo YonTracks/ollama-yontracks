@@ -4,7 +4,6 @@
 ; 
 ; powershell -ExecutionPolicy Bypass -File .\scripts\build_windows.ps
 
-
 #define MyAppName "Ollama"
 #if GetEnv("PKG_VERSION") != ""
   #define MyAppVersion GetEnv("PKG_VERSION")
@@ -70,7 +69,6 @@ DisableReadyPage=yes
 DisableStartupPrompt=yes
 DisableWelcomePage=yes
 
-
 ; Larger DialogFontSize will auto size the wizard window accordingly.
 WizardSizePercent=100
 
@@ -92,7 +90,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 #if DirExists("..\dist\windows-amd64")
 Source: "..\dist\windows-amd64-app.exe"; DestDir: "{app}"; DestName: "{#MyAppExeName}" ;Check: not IsArm64();  Flags: ignoreversion 64bit
 Source: "..\dist\windows-amd64\ollama.exe"; DestDir: "{app}"; Check: not IsArm64(); Flags: ignoreversion 64bit
-;does not seem to hold the required files
+; does not seem to hold the required files
 Source: "..\dist\windows-amd64\lib\ollama\*"; DestDir: "{app}\lib\ollama\"; Check: not IsArm64(); Flags: ignoreversion 64bit recursesubdirs
 #endif
 
@@ -133,8 +131,9 @@ Filename: "{cmd}"; Parameters: "/c timeout 5"; Flags: runhidden
 Type: filesandordirs; Name: "{%TEMP}\ollama*"
 Type: filesandordirs; Name: "{%LOCALAPPDATA}\Ollama"
 Type: filesandordirs; Name: "{%LOCALAPPDATA}\Programs\Ollama"
-Type: filesandordirs; Name: "{%USERPROFILE}\.ollama\models"
-Type: filesandordirs; Name: "{%USERPROFILE}\.ollama\history"
+; The models and history directories in the user profile are now handled in code
+; Type: filesandordirs; Name: "{%USERPROFILE}\.ollama\models"
+; Type: filesandordirs; Name: "{%USERPROFILE}\.ollama\history"
 ; NOTE: if the user has a custom OLLAMA_MODELS it will be preserved
 
 [InstallDelete]
@@ -142,14 +141,14 @@ Type: filesandordirs; Name: "{%TEMP}\ollama*"
 Type: filesandordirs; Name: "{%LOCALAPPDATA}\Programs\Ollama"
 
 [Messages]
+
 WizardReady=Ollama
 ReadyLabel1=%nLet's get you up and running with your own large language models.
 SetupAppRunningError=Another Ollama installer is running.%n%nPlease cancel or finish the other installer, then click OK to continue with this install, or Cancel to exit.
 
-
-;FinishedHeadingLabel=Run your first model
-;FinishedLabel=%nRun this command in a PowerShell or cmd terminal.%n%n%n    ollama run llama3.2
-;ClickFinish=%n
+; FinishedHeadingLabel=Run your first model
+; FinishedLabel=%nRun this command in a PowerShell or cmd terminal.%n%n%n    ollama run llama3.2
+; ClickFinish=%n
 
 [Registry]
 Root: HKCU; Subkey: "Environment"; \
@@ -157,6 +156,79 @@ Root: HKCU; Subkey: "Environment"; \
     Check: NeedsAddPath('{app}')
 
 [Code]
+const
+  MY_FILE_ATTRIBUTE_DIRECTORY = $10;
+
+{ Recursive function to delete all files and subdirectories in a given directory }
+function DeleteDirectoryRecursive(const Dir: string): Boolean;
+var
+  FindRec: TFindRec;
+  FilePath: string;
+begin
+  Result := True;
+  if not DirExists(Dir) then
+    Exit;
+
+  if FindFirst(AddBackslash(Dir) + '*', FindRec) then
+  begin
+    try
+      repeat
+        if (FindRec.Name <> '.') and (FindRec.Name <> '..') then
+        begin
+          FilePath := AddBackslash(Dir) + FindRec.Name;
+          if (FindRec.Attributes and MY_FILE_ATTRIBUTE_DIRECTORY) <> 0 then
+          begin
+            if not DeleteDirectoryRecursive(FilePath) then
+              Result := False;
+          end
+          else
+          begin
+            if not DeleteFile(FilePath) then
+              Result := False;
+          end;
+        end;
+      until not FindNext(FindRec);
+    finally
+      FindClose(FindRec);
+    end;
+  end;
+
+  if not RemoveDir(Dir) then
+    Result := False;
+end;
+
+{ This function runs at the start of uninstallation.
+  It asks the user whether to keep their models and configuration files.
+  If the user chooses "No", the entire .ollama folder in the user profile is removed. }
+function InitializeUninstall(): Boolean;
+var
+  KeepModels: Boolean;
+  OllamaDir: string;
+begin
+  // Ask the user if they want to keep their models/configuration files during uninstall.
+  // Choosing "No" will delete the entire .ollama folder in the user profile.
+  KeepModels := MsgBox(
+    'Uninstall is initializing. Do you want to keep existing models and configuration files?'#13#10 +
+    'Choose Yes to keep them, or No to delete them (this will remove the entire .ollama folder).',
+    mbConfirmation, MB_YESNO) = idYes;
+
+  OllamaDir := ExpandConstant('{%USERPROFILE}\.ollama');
+  if KeepModels then
+  begin
+    MsgBox('Models, history, and configuration files will be kept.', mbInformation, MB_OK);
+  end
+  else
+  begin
+    if DirExists(OllamaDir) then
+    begin
+      if not DeleteDirectoryRecursive(OllamaDir) then
+        MsgBox('Failed to delete the .ollama folder completely.', mbError, MB_OK)
+      else
+    end;
+  end;
+
+  Result := True; // Continue with uninstallation.
+end;
 
 function NeedsAddPath(Param: string): boolean;
 var
@@ -175,12 +247,13 @@ begin
 end;
 
 { --- VC Runtime libraries discovery code - Only install vc_redist if it isn't already installed ----- }
-const VCRTL_MIN_V1 = 14;
-const VCRTL_MIN_V2 = 40;
-const VCRTL_MIN_V3 = 33807;
-const VCRTL_MIN_V4 = 0;
+const
+  VCRTL_MIN_V1 = 14;
+  VCRTL_MIN_V2 = 40;
+  VCRTL_MIN_V3 = 33807;
+  VCRTL_MIN_V4 = 0;
 
- // check if the minimum required vc redist is installed (by looking the registry)
+ // Check if the minimum required VC++ redistributable is installed (by looking in the registry)
 function vc_redist_needed (): Boolean;
 var
   sRegKey: string;
@@ -195,11 +268,10 @@ begin
       RegQueryDWordValue (HKEY_LOCAL_MACHINE, sRegKey, 'Bld', v3) and
       RegQueryDWordValue (HKEY_LOCAL_MACHINE, sRegKey, 'RBld', v4)) then
   begin
-    Log ('VC Redist version: ' + IntToStr (v1) +
-        '.' + IntToStr (v2) + '.' + IntToStr (v3) +
-        '.' + IntToStr (v4));
-    { Version info was found. Return true if later or equal to our
-       minimal required version RTL_MIN_Vx }
+    Log ('VC Redist version: ' + IntToStr(v1) +
+        '.' + IntToStr(v2) + '.' + IntToStr(v3) +
+        '.' + IntToStr(v4));
+    { Version info was found. Return true if the installed version is less than the required version. }
     Result := not (
         (v1 > VCRTL_MIN_V1) or ((v1 = VCRTL_MIN_V1) and
          ((v2 > VCRTL_MIN_V2) or ((v2 = VCRTL_MIN_V2) and
