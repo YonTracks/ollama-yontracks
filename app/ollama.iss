@@ -82,13 +82,13 @@ SetupMutex=OllamaSetupMutex
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
-; Larger DialogFontSize will auto size the wizard window accordingly.
+; Default=8
 ; [LangOptions]
 ; DialogFontSize=12
 
 [Files]
 #if DirExists("..\dist\windows-amd64")
-Source: "..\dist\windows-amd64-app.exe"; DestDir: "{app}"; DestName: "{#MyAppExeName}" ;Check: not IsArm64();  Flags: ignoreversion 64bit
+Source: "..\dist\windows-amd64-app.exe"; DestDir: "{app}"; DestName: "{#MyAppExeName}" ;Check: not IsArm64(); Flags: ignoreversion 64bit
 Source: "..\dist\windows-amd64\ollama.exe"; DestDir: "{app}"; Check: not IsArm64(); Flags: ignoreversion 64bit
 ; does not seem to hold the required files
 Source: "..\dist\windows-amd64\lib\ollama\*"; DestDir: "{app}\lib\ollama\"; Check: not IsArm64(); Flags: ignoreversion 64bit recursesubdirs
@@ -100,7 +100,7 @@ Source: "..\build\lib\ollama\*"; DestDir: "{app}\lib\ollama\"; Check: not IsArm6
 
 #if DirExists("..\dist\windows-arm64")
 Source: "..\dist\windows-arm64\vc_redist.arm64.exe"; DestDir: "{tmp}"; Check: IsArm64() and vc_redist_needed(); Flags: deleteafterinstall
-Source: "..\dist\windows-arm64-app.exe"; DestDir: "{app}"; DestName: "{#MyAppExeName}" ;Check: IsArm64();  Flags: ignoreversion 64bit
+Source: "..\dist\windows-arm64-app.exe"; DestDir: "{app}"; DestName: "{#MyAppExeName}" ;Check: IsArm64(); Flags: ignoreversion 64bit
 Source: "..\dist\windows-arm64\ollama.exe"; DestDir: "{app}"; Check: IsArm64(); Flags: ignoreversion 64bit
 #endif
 
@@ -129,12 +129,11 @@ Filename: "{cmd}"; Parameters: "/c timeout 5"; Flags: runhidden
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{%TEMP}\ollama*"
-Type: filesandordirs; Name: "{%LOCALAPPDATA}\Ollama"
-Type: filesandordirs; Name: "{%LOCALAPPDATA}\Programs\Ollama"
-; The models and history directories in the user profile are now handled in code
+; The following folders are now handled in code:
+; Type: filesandordirs; Name: "{%LOCALAPPDATA}\Ollama"
+; Type: filesandordirs; Name: "{%LOCALAPPDATA}\Programs\Ollama"
 ; Type: filesandordirs; Name: "{%USERPROFILE}\.ollama\models"
 ; Type: filesandordirs; Name: "{%USERPROFILE}\.ollama\history"
-; NOTE: if the user has a custom OLLAMA_MODELS it will be preserved
 
 [InstallDelete]
 Type: filesandordirs; Name: "{%TEMP}\ollama*"
@@ -145,10 +144,6 @@ WizardReady=Ollama
 ReadyLabel1=%nLet's get you up and running with your own large language models.
 SetupAppRunningError=Another Ollama installer is running.%n%nPlease cancel or finish the other installer, then click OK to continue with this install, or Cancel to exit.
 UninstallConfirm=Please confirm: do you really want to completely remove Ollama and all its components?
-
-; FinishedHeadingLabel=Run your first model
-; FinishedLabel=%nRun this command in a PowerShell or cmd terminal.%n%n%n    ollama run llama3.2
-; ClickFinish=%n
 
 [Registry]
 Root: HKCU; Subkey: "Environment"; \
@@ -161,7 +156,8 @@ const
   MY_FILE_ATTRIBUTE_DIRECTORY = $10;
 
 var
-  UserWantsKeep: Boolean;  { True if the user wants to keep the .ollama folder }
+  UserWantsKeep: Boolean;       { Choice for %USERPROFILE%\.ollama }
+  UserWantsKeepLocal: Boolean;  { Choice for %LOCALAPPDATA%\Ollama }
 
 { Recursive function to delete all files and subdirectories in a given directory }
 function DeleteDirectoryRecursive(const Dir: string): Boolean;
@@ -172,7 +168,6 @@ begin
   Result := True;
   if not DirExists(Dir) then
     Exit;
-
   if FindFirst(AddBackslash(Dir) + '*', FindRec) then
   begin
     try
@@ -196,27 +191,38 @@ begin
       FindClose(FindRec);
     end;
   end;
-
   if not RemoveDir(Dir) then
     Result := False;
 end;
 
 { InitializeUninstall:
-  Ask the user whether to keep their models/configuration.
-  The decision is stored in UserWantsKeep.
-  If the user chooses to keep, a message is shown and the default uninstall confirmation page is skipped.
-  Otherwise, deletion is deferred until after final confirmation. }
+  Ask the user whether to keep their models/configuration (in %USERPROFILE%\.ollama)
+  and whether to keep logs/updates (in %LOCALAPPDATA%\Ollama).
+  The decisions are stored in UserWantsKeep and UserWantsKeepLocal respectively.
+  Deletion for folders chosen for removal is deferred until after final confirmation. }
 function InitializeUninstall(): Boolean;
 begin
   UserWantsKeep := MsgBox(
-    'Uninstall is initializing. Do you want to keep existing models and configuration files?'#13#10 +
-    'Choose Yes to keep them, or No to delete them (this will remove the entire .ollama folder).',
+    'Uninstall is initializing.'#13#10 +
+    'Do you want to keep your models, history, and configuration files? '#13#10 +
+    'Choose Yes to keep (the %USERPROFILE%\.ollama folder), or No to delete it.',
     mbConfirmation, MB_YESNO) = idYes;
 
   if UserWantsKeep then
-  begin
-    MsgBox('Models, history, and configuration files will be kept. (Create a backup for best practice).', mbInformation, MB_OK);
-  end;
+    MsgBox('The .ollama folder (models, history, configuration) will be kept.', mbInformation, MB_OK)
+  else
+    MsgBox('The .ollama folder will be removed after final confirmation.', mbInformation, MB_OK);
+
+  UserWantsKeepLocal := MsgBox(
+    'Do you want to keep your logs and updates?'#13#10 +
+    'Choose Yes to keep the %LOCALAPPDATA%\Ollama folder, or No to delete it.',
+    mbConfirmation, MB_YESNO) = idYes;
+
+  if UserWantsKeepLocal then
+    MsgBox('The %LOCALAPPDATA%\Ollama folder (logs, updates) will be kept.', mbInformation, MB_OK)
+  else
+    MsgBox('The %LOCALAPPDATA%\Ollama folder will be removed after final confirmation.', mbInformation, MB_OK);
+
   Result := True; // Continue with uninstallation.
 end;
 
@@ -231,19 +237,30 @@ begin
     Result := False;
 end;
 
-{ After final confirmation (during the usUninstall step), if the user chose deletion,
-  delete the .ollama folder. }
+{ After final confirmation (during the usUninstall step), delete folders that the user chose to remove. }
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
-  OllamaDir: string;
+  UserFolder, LocalFolder: string;
 begin
-  if (CurUninstallStep = usUninstall) and (not UserWantsKeep) then
+  if CurUninstallStep = usUninstall then
   begin
-    OllamaDir := ExpandConstant('{%USERPROFILE}\.ollama');
-    if DirExists(OllamaDir) then
+    if not UserWantsKeep then
     begin
-      if not DeleteDirectoryRecursive(OllamaDir) then
-        MsgBox('Failed to delete the .ollama folder completely.', mbError, MB_OK);
+      UserFolder := ExpandConstant('{%USERPROFILE}\.ollama');
+      if DirExists(UserFolder) then
+      begin
+        if not DeleteDirectoryRecursive(UserFolder) then
+          MsgBox('Failed to delete the .ollama folder completely.', mbError, MB_OK);
+      end;
+    end;
+    if not UserWantsKeepLocal then
+    begin
+      LocalFolder := ExpandConstant('{%LOCALAPPDATA}\Ollama');
+      if DirExists(LocalFolder) then
+      begin
+        if not DeleteDirectoryRecursive(LocalFolder) then
+          MsgBox('Failed to delete the %LOCALAPPDATA%\Ollama folder completely.', mbError, MB_OK);
+      end;
     end;
   end;
 end;

@@ -1081,8 +1081,9 @@ func initializeKeypair() error {
 		if err := os.WriteFile(pubKeyPath, publicKeyBytes, 0o644); err != nil {
 			return err
 		}
-
-		fmt.Printf("Your new public key is: \n\n%s\n", publicKeyBytes)
+		fmt.Printf("New key pair generated successfully. (Uncomment in code to get the key)\n")
+		// Todo: check if only available in debug log, safe to show anyway. I think?
+		// fmt.Printf("Your new public key is: \n\n%s\n", publicKeyBytes)
 	}
 	return nil
 }
