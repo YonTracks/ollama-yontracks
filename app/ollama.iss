@@ -141,10 +141,10 @@ Type: filesandordirs; Name: "{%TEMP}\ollama*"
 Type: filesandordirs; Name: "{%LOCALAPPDATA}\Programs\Ollama"
 
 [Messages]
-
 WizardReady=Ollama
 ReadyLabel1=%nLet's get you up and running with your own large language models.
 SetupAppRunningError=Another Ollama installer is running.%n%nPlease cancel or finish the other installer, then click OK to continue with this install, or Cancel to exit.
+UninstallConfirm=Please confirm: do you really want to completely remove Ollama and all its components?
 
 ; FinishedHeadingLabel=Run your first model
 ; FinishedLabel=%nRun this command in a PowerShell or cmd terminal.%n%n%n    ollama run llama3.2
@@ -157,7 +157,11 @@ Root: HKCU; Subkey: "Environment"; \
 
 [Code]
 const
+  wpUninstallConfirm = 1;  { Define the uninstall confirmation page identifier }
   MY_FILE_ATTRIBUTE_DIRECTORY = $10;
+
+var
+  UserWantsKeep: Boolean;  { True if the user wants to keep the .ollama folder }
 
 { Recursive function to delete all files and subdirectories in a given directory }
 function DeleteDirectoryRecursive(const Dir: string): Boolean;
@@ -197,87 +201,91 @@ begin
     Result := False;
 end;
 
-{ This function runs at the start of uninstallation.
-  It asks the user whether to keep their models and configuration files.
-  If the user chooses "No", the entire .ollama folder in the user profile is removed. }
+{ InitializeUninstall:
+  Ask the user whether to keep their models/configuration.
+  The decision is stored in UserWantsKeep.
+  If the user chooses to keep, a message is shown and the default uninstall confirmation page is skipped.
+  Otherwise, deletion is deferred until after final confirmation. }
 function InitializeUninstall(): Boolean;
-var
-  KeepModels: Boolean;
-  OllamaDir: string;
 begin
-  // Ask the user if they want to keep their models/configuration files during uninstall.
-  // Choosing "No" will delete the entire .ollama folder in the user profile.
-  KeepModels := MsgBox(
+  UserWantsKeep := MsgBox(
     'Uninstall is initializing. Do you want to keep existing models and configuration files?'#13#10 +
     'Choose Yes to keep them, or No to delete them (this will remove the entire .ollama folder).',
     mbConfirmation, MB_YESNO) = idYes;
 
-  OllamaDir := ExpandConstant('{%USERPROFILE}\.ollama');
-  if KeepModels then
+  if UserWantsKeep then
   begin
-    MsgBox('Models, history, and configuration files will be kept. (create a backup for best practice).', mbInformation, MB_OK);
-  end
-  else
-  begin
-    if DirExists(OllamaDir) then
-    begin
-      if not DeleteDirectoryRecursive(OllamaDir) then
-        MsgBox('Failed to delete the .ollama folder completely.', mbError, MB_OK)
-      else
-    end;
+    MsgBox('Models, history, and configuration files will be kept. (Create a backup for best practice).', mbInformation, MB_OK);
   end;
-
   Result := True; // Continue with uninstallation.
 end;
 
-function NeedsAddPath(Param: string): boolean;
+{ Conditionally skip the default uninstall confirmation page.
+  If the user chose to keep their models (UserWantsKeep=True), skip the confirmation page;
+  otherwise, show it. }
+function ShouldSkipPage(PageID: Integer): Boolean;
+begin
+  if PageID = wpUninstallConfirm then
+    Result := UserWantsKeep
+  else
+    Result := False;
+end;
+
+{ After final confirmation (during the usUninstall step), if the user chose deletion,
+  delete the .ollama folder. }
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  OllamaDir: string;
+begin
+  if (CurUninstallStep = usUninstall) and (not UserWantsKeep) then
+  begin
+    OllamaDir := ExpandConstant('{%USERPROFILE}\.ollama');
+    if DirExists(OllamaDir) then
+    begin
+      if not DeleteDirectoryRecursive(OllamaDir) then
+        MsgBox('Failed to delete the .ollama folder completely.', mbError, MB_OK);
+    end;
+  end;
+end;
+
+function NeedsAddPath(Param: string): Boolean;
 var
   OrigPath: string;
 begin
-  if not RegQueryStringValue(HKEY_CURRENT_USER,
-    'Environment',
-    'Path', OrigPath)
-  then begin
+  if not RegQueryStringValue(HKEY_CURRENT_USER, 'Environment', 'Path', OrigPath) then
+  begin
     Result := True;
     exit;
   end;
-  { look for the path with leading and trailing semicolon }
-  { Pos() returns 0 if not found }
+  { Look for the path with leading and trailing semicolon.
+    Pos() returns 0 if not found. }
   Result := Pos(';' + ExpandConstant(Param) + ';', ';' + OrigPath + ';') = 0;
 end;
 
-{ --- VC Runtime libraries discovery code - Only install vc_redist if it isn't already installed ----- }
+{ --- VC++ Redistributable discovery code --- }
 const
   VCRTL_MIN_V1 = 14;
   VCRTL_MIN_V2 = 40;
   VCRTL_MIN_V3 = 33807;
   VCRTL_MIN_V4 = 0;
 
- // Check if the minimum required VC++ redistributable is installed (by looking in the registry)
-function vc_redist_needed (): Boolean;
+function vc_redist_needed(): Boolean;
 var
   sRegKey: string;
-  v1: Cardinal;
-  v2: Cardinal;
-  v3: Cardinal;
-  v4: Cardinal;
+  v1, v2, v3, v4: Cardinal;
 begin
   sRegKey := 'SOFTWARE\WOW6432Node\Microsoft\VisualStudio\14.0\VC\Runtimes\arm64';
-  if (RegQueryDWordValue (HKEY_LOCAL_MACHINE, sRegKey, 'Major', v1)  and
-      RegQueryDWordValue (HKEY_LOCAL_MACHINE, sRegKey, 'Minor', v2) and
-      RegQueryDWordValue (HKEY_LOCAL_MACHINE, sRegKey, 'Bld', v3) and
-      RegQueryDWordValue (HKEY_LOCAL_MACHINE, sRegKey, 'RBld', v4)) then
+  if (RegQueryDWordValue(HKEY_LOCAL_MACHINE, sRegKey, 'Major', v1) and
+      RegQueryDWordValue(HKEY_LOCAL_MACHINE, sRegKey, 'Minor', v2) and
+      RegQueryDWordValue(HKEY_LOCAL_MACHINE, sRegKey, 'Bld', v3) and
+      RegQueryDWordValue(HKEY_LOCAL_MACHINE, sRegKey, 'RBld', v4)) then
   begin
-    Log ('VC Redist version: ' + IntToStr(v1) +
-        '.' + IntToStr(v2) + '.' + IntToStr(v3) +
-        '.' + IntToStr(v4));
-    { Version info was found. Return true if the installed version is less than the required version RTL_MIN_Vx. }
-    Result := not (
-        (v1 > VCRTL_MIN_V1) or ((v1 = VCRTL_MIN_V1) and
-         ((v2 > VCRTL_MIN_V2) or ((v2 = VCRTL_MIN_V2) and
-          ((v3 > VCRTL_MIN_V3) or ((v3 = VCRTL_MIN_V3) and
-           (v4 >= VCRTL_MIN_V4)))))));
+    Log('VC Redist version: ' + IntToStr(v1) + '.' + IntToStr(v2) + '.' + IntToStr(v3) + '.' + IntToStr(v4));
+    { Return true if the installed version is less than the required version. }
+    Result := not ((v1 > VCRTL_MIN_V1) or ((v1 = VCRTL_MIN_V1) and
+               ((v2 > VCRTL_MIN_V2) or ((v2 = VCRTL_MIN_V2) and
+               ((v3 > VCRTL_MIN_V3) or ((v3 = VCRTL_MIN_V3) and (v4 >= VCRTL_MIN_V4)))))));
   end
   else
-    Result := TRUE;
+    Result := True;
 end;
