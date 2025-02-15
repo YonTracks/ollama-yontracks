@@ -215,7 +215,7 @@ begin
   OllamaDir := ExpandConstant('{%USERPROFILE}\.ollama');
   if KeepModels then
   begin
-    MsgBox('Models, history, and configuration files will be kept.', mbInformation, MB_OK);
+    MsgBox('Models, history, and configuration files will be kept. (create a backup for best practice).', mbInformation, MB_OK);
   end
   else
   begin
@@ -271,7 +271,7 @@ begin
     Log ('VC Redist version: ' + IntToStr(v1) +
         '.' + IntToStr(v2) + '.' + IntToStr(v3) +
         '.' + IntToStr(v4));
-    { Version info was found. Return true if the installed version is less than the required version. }
+    { Version info was found. Return true if the installed version is less than the required version RTL_MIN_Vx. }
     Result := not (
         (v1 > VCRTL_MIN_V1) or ((v1 = VCRTL_MIN_V1) and
          ((v2 > VCRTL_MIN_V2) or ((v2 = VCRTL_MIN_V2) and
