@@ -18,7 +18,7 @@
 [Setup]
 ; NOTE: The value of AppId uniquely identifies this application. Do not use the same AppId value in installers for other applications.
 ; (To generate a new GUID, click Tools | Generate GUID inside the IDE.)
-AppId={{44E83376-CE68-45EB-8FC1-393500EB558C}
+AppId={{44E83376-CE68-45EB-8FC1-393500EB558C}}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 VersionInfoVersion={#MyAppVersion}
@@ -36,6 +36,9 @@ PrivilegesRequired=lowest
 OutputBaseFilename="OllamaSetup"
 SetupIconFile={#MyIcon}
 UninstallDisplayIcon={uninstallexe}
+; RunOnceId warning disabled
+MissingRunOnceIdsWarning=no
+
 Compression=lzma2
 SolidCompression=no
 WizardStyle=modern
@@ -146,7 +149,6 @@ Type: filesandordirs; Name: "{%LOCALAPPDATA}\Programs\Ollama"
 WizardReady=Ollama
 ReadyLabel1=%nLet's get you up and running with your own large language models.
 SetupAppRunningError=Another Ollama installer is running.%n%nPlease cancel or finish the other installer, then click OK to continue with this install, or Cancel to exit.
-UninstallConfirm=Please confirm: do you really want to completely remove Ollama and all its components?
 
 [Registry]
 Root: HKCU; Subkey: "Environment"; \
