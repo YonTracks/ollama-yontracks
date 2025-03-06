@@ -220,8 +220,7 @@ func GetGPUInfo() GpuInfoList {
 			cpus = []CPUInfo{cpuInfo}
 			return GpuInfoList{cpuInfo.GpuInfo}
 		}
-
-		slog.Info("gpu environment variable", key, os.Getenv(key))
+		slog.Debug("gpu environment variable", key, os.Getenv(key))
 
 	}
 
