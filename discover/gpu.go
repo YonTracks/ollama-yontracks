@@ -220,14 +220,12 @@ func GetGPUInfo() GpuInfoList {
 			cpus = []CPUInfo{cpuInfo}
 			return GpuInfoList{cpuInfo.GpuInfo}
 		}
-		slog.Debug("gpu environment variable", key, os.Getenv(key))
+		slog.Debug("gpu environment variable (os.Getenv)", key, os.Getenv(key))
 
 	}
 
-	if v2 := envconfig.CudaVisibleDevices(); v2 == "" {
-		slog.Debug("CUDA_VISIBLE_DEVICES is empty", "", envconfig.CudaVisibleDevices())
-	}
-
+	slog.Debug("CUDA_VISIBLE_DEVICES(envconfig)", "", envconfig.CudaVisibleDevices())
+	slog.Debug("HIP_VISIBLE_DEVICES(envconfig)", "", envconfig.HipVisibleDevices())
 	// Proceed with GPU discovery if no GPU env variable forced CPU-only mode.
 	gpuMutex.Lock()
 	defer gpuMutex.Unlock()
