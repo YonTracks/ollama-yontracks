@@ -220,6 +220,9 @@ func GetGPUInfo() GpuInfoList {
 			cpus = []CPUInfo{cpuInfo}
 			return GpuInfoList{cpuInfo.GpuInfo}
 		}
+
+		slog.Info("gpu environment variable", key, os.Getenv(key))
+
 	}
 
 	// Proceed with GPU discovery if no GPU env variable forced CPU-only mode.
