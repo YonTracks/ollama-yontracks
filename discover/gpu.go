@@ -224,6 +224,10 @@ func GetGPUInfo() GpuInfoList {
 
 	}
 
+	if v2 := envconfig.CudaVisibleDevices(); v2 == "" {
+		slog.Debug("CUDA_VISIBLE_DEVICES is empty", "", envconfig.CudaVisibleDevices())
+	}
+
 	// Proceed with GPU discovery if no GPU env variable forced CPU-only mode.
 	gpuMutex.Lock()
 	defer gpuMutex.Unlock()
