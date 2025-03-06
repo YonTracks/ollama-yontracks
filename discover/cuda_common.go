@@ -15,18 +15,11 @@ import (
 // Included to drive logic for reducing Ollama-allocated overhead on L4T/Jetson devices.
 var CudaTegra string = os.Getenv("JETSON_JETPACK")
 
-// / cudaGetVisibleDevicesEnv constructs the CUDA_VISIBLE_DEVICES variable from the GPU info.
-// If no CUDA devices are available (i.e. CPU-only mode), it returns an empty string.
 func cudaGetVisibleDevicesEnv(gpuInfo []GpuInfo) (string, string) {
-	// If no GPU info is available, return an empty string.
-	if len(gpuInfo) == 0 {
-		slog.Debug("cudaGetVisibleDevicesEnv: no GPU info available, returning empty string")
-		return "CUDA_VISIBLE_DEVICES", ""
-	}
 	ids := []string{}
 	for _, info := range gpuInfo {
 		if info.Library != "cuda" {
-			// TODO: shouldn't happen if things are wired correctly...
+			// TODO shouldn't happen if things are wired correctly...
 			slog.Debug("cudaGetVisibleDevicesEnv skipping over non-cuda device", "library", info.Library)
 			continue
 		}
@@ -35,11 +28,7 @@ func cudaGetVisibleDevicesEnv(gpuInfo []GpuInfo) (string, string) {
 	return "CUDA_VISIBLE_DEVICES", strings.Join(ids, ",")
 }
 
-// cudaVariant determines which CUDA variant to use for the given GPU.
-// For ARM64 Linux devices (e.g., Jetson), it selects a Jetpack variant if available.
-// For other architectures, it falls back to driver-based logic.
 func cudaVariant(gpuInfo CudaGPUInfo) string {
-	// If running on ARM64 Linux, check for Jetson-specific settings.
 	if runtime.GOARCH == "arm64" && runtime.GOOS == "linux" {
 		if CudaTegra != "" {
 			ver := strings.Split(CudaTegra, ".")
@@ -68,8 +57,7 @@ func cudaVariant(gpuInfo CudaGPUInfo) string {
 		}
 	}
 
-	// For non-ARM64 or when Jetson details are not available,
-	// if the driver is older than version 12.0, use the v11 library.
+	// driver 12.0 has problems with the cuda v12 library, so run v11 on those older drivers
 	if gpuInfo.DriverMajor < 12 || (gpuInfo.DriverMajor == 12 && gpuInfo.DriverMinor == 0) {
 		return "v11"
 	}
