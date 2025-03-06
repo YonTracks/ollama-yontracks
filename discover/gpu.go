@@ -186,8 +186,43 @@ func GetCPUInfo() GpuInfoList {
 }
 
 func GetGPUInfo() GpuInfoList {
-	// TODO - consider exploring lspci (and equivalent on windows) to check for
+	// TODO: - consider exploring lspci (and equivalent on windows) to check for
 	// GPUs so we can report warnings if we see Nvidia/AMD but fail to load the libraries
+
+	// Check if any GPU-related env variable indicates CPU-only mode.
+	gpuEnvVars := []string{
+		"CUDA_VISIBLE_DEVICES",
+		"HIP_VISIBLE_DEVICES",
+		"ROCR_VISIBLE_DEVICES",
+		"GPU_DEVICE_ORDINAL",
+		"HSA_OVERRIDE_GFX_VERSION",
+	}
+	for _, key := range gpuEnvVars {
+		if v := os.Getenv(key); v == "-1" {
+			slog.Info("Skipping GPU discovery: " + key + " is '-1', using CPU-only mode")
+			mem, err := GetCPUMem()
+			if err != nil {
+				slog.Warn("error looking up system memory", "error", err)
+			}
+			details, err := GetCPUDetails()
+			if err != nil {
+				slog.Warn("failed to lookup CPU details", "error", err)
+			}
+			cpuInfo := CPUInfo{
+				GpuInfo: GpuInfo{
+					memInfo: mem,
+					Library: "cpu",
+					ID:      "0",
+				},
+				CPUs: details,
+			}
+			// Populate the global cpus slice so that GetSystemInfo() does not panic.
+			cpus = []CPUInfo{cpuInfo}
+			return GpuInfoList{cpuInfo.GpuInfo}
+		}
+	}
+
+	// Proceed with GPU discovery if no GPU env variable forced CPU-only mode.
 	gpuMutex.Lock()
 	defer gpuMutex.Unlock()
 	needRefresh := true
@@ -328,7 +363,7 @@ func GetGPUInfo() GpuInfoList {
 					}
 				}
 
-				// TODO potentially sort on our own algorithm instead of what the underlying GPU library does...
+				// TODO: potentially sort on our own algorithm instead of relying on the underlying GPU library.
 				cudaGPUs = append(cudaGPUs, gpuInfo)
 			}
 		}
@@ -352,10 +387,11 @@ func GetGPUInfo() GpuInfoList {
 							driverIndex: int(d),
 							gpuIndex:    int(i),
 						}
-						// TODO - split bootstrapping from updating free memory
+						// TODO: - split bootstrapping from updating free memory
 						C.oneapi_check_vram(*oHandles.oneapi, C.int(d), i, &memInfo)
-						// TODO - convert this to MinimumMemory based on testing...
-						var totalFreeMem float64 = float64(memInfo.free) * 0.95 // work-around: leave some reserve vram for mkl lib used in ggml-sycl backend.
+						// TODO: - convert this to MinimumMemory based on testing...
+						// Work-around: leave some reserve VRAM for the MKL lib used in the ggml-sycl backend.
+						var totalFreeMem float64 = float64(memInfo.free) * 0.95
 						memInfo.free = C.uint64_t(totalFreeMem)
 						gpuInfo.TotalMemory = uint64(memInfo.total)
 						gpuInfo.FreeMemory = uint64(memInfo.free)
@@ -377,12 +413,10 @@ func GetGPUInfo() GpuInfoList {
 			slog.Info("no compatible GPUs were discovered")
 		}
 
-		// TODO verify we have runners for the discovered GPUs, filter out any that aren't supported with good error messages
+		// TODO: Verify we have runners for the discovered GPUs, filtering out unsupported ones with good error messages.
 	}
-
-	// For detected GPUs, load library if not loaded
-
-	// Refresh free memory usage
+	// For detected GPUs
+	// Refresh free memory usage if needed.
 	if needRefresh {
 		mem, err := GetCPUMem()
 		if err != nil {
@@ -467,8 +501,9 @@ func GetGPUInfo() GpuInfoList {
 				continue
 			}
 			C.oneapi_check_vram(*oHandles.oneapi, C.int(gpu.driverIndex), C.int(gpu.gpuIndex), &memInfo)
-			// TODO - convert this to MinimumMemory based on testing...
-			var totalFreeMem float64 = float64(memInfo.free) * 0.95 // work-around: leave some reserve vram for mkl lib used in ggml-sycl backend.
+			// TODO: - convert this to MinimumMemory based on testing...
+			// Work-around: leave some reserve VRAM for the MKL lib used in the ggml-sycl backend.
+			var totalFreeMem float64 = float64(memInfo.free) * 0.95
 			memInfo.free = C.uint64_t(totalFreeMem)
 			oneapiGPUs[i].FreeMemory = uint64(memInfo.free)
 		}
@@ -570,7 +605,7 @@ func loadCUDARTMgmt(cudartLibPaths []string) (int, *C.cudart_handle_t, string, e
 		defer C.free(unsafe.Pointer(lib))
 		C.cudart_init(lib, &resp)
 		if resp.err != nil {
-			err = fmt.Errorf("Unable to load cudart library %s: %s", libPath, C.GoString(resp.err))
+			err = fmt.Errorf("unable to load cudart library %s: %s", libPath, C.GoString(resp.err))
 			slog.Debug(err.Error())
 			C.free(unsafe.Pointer(resp.err))
 		} else {
@@ -608,7 +643,7 @@ func loadNVCUDAMgmt(nvcudaLibPaths []string) (int, *C.nvcuda_handle_t, string, e
 				if strings.Contains(msg, "wrong ELF class") {
 					slog.Debug("skipping 32bit library", "library", libPath)
 				} else {
-					err = fmt.Errorf("Unable to load cudart library %s: %s", libPath, C.GoString(resp.err))
+					err = fmt.Errorf("unable to load cudart library %s: %s", libPath, C.GoString(resp.err))
 					slog.Info(err.Error())
 				}
 			}
@@ -632,7 +667,7 @@ func loadNVMLMgmt(nvmlLibPaths []string) (*C.nvml_handle_t, string, error) {
 		defer C.free(unsafe.Pointer(lib))
 		C.nvml_init(lib, &resp)
 		if resp.err != nil {
-			err = fmt.Errorf("Unable to load NVML management library %s: %s", libPath, C.GoString(resp.err))
+			err = fmt.Errorf("unable to load NVML management library %s: %s", libPath, C.GoString(resp.err))
 			slog.Info(err.Error())
 			C.free(unsafe.Pointer(resp.err))
 		} else {
@@ -655,7 +690,7 @@ func loadOneapiMgmt(oneapiLibPaths []string) (int, *C.oneapi_handle_t, string, e
 		defer C.free(unsafe.Pointer(lib))
 		C.oneapi_init(lib, &resp)
 		if resp.err != nil {
-			err = fmt.Errorf("Unable to load oneAPI management library %s: %s", libPath, C.GoString(resp.err))
+			err = fmt.Errorf("unable to load oneAPI management library %s: %s", libPath, C.GoString(resp.err))
 			slog.Debug(err.Error())
 			C.free(unsafe.Pointer(resp.err))
 		} else {

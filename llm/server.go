@@ -24,6 +24,8 @@ import (
 
 	"golang.org/x/sync/semaphore"
 
+	"slices"
+
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
@@ -103,6 +105,25 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 	systemFreeMemory := systemInfo.System.FreeMemory
 	systemSwapFreeMemory := systemInfo.System.FreeSwap
 	slog.Info("system memory", "total", format.HumanBytes2(systemTotalMemory), "free", format.HumanBytes2(systemFreeMemory), "free_swap", format.HumanBytes2(systemSwapFreeMemory))
+
+	// If the user has set CUDA_VISIBLE_DEVICES to "-1" or to an empty string,
+	// then we should not use any GPUs.
+	gpuVars := []string{
+		"CUDA_VISIBLE_DEVICES",
+		"HIP_VISIBLE_DEVICES",
+		"ROCR_VISIBLE_DEVICES",
+		"GPU_DEVICE_ORDINAL",
+		"HSA_OVERRIDE_GFX_VERSION",
+	}
+	for _, key := range gpuVars {
+		if val, ok := os.LookupEnv(key); ok {
+			if val == "-1" {
+				slog.Info(key + " is set to '-1', using CPU-only mode")
+				opts.NumGPU = 0
+				break // no need to check further once CPU-only mode is enabled
+			}
+		}
+	}
 
 	// If the user wants zero GPU layers, reset the gpu list to be CPU/system ram info
 	if opts.NumGPU == 0 {
@@ -260,11 +281,11 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		}
 	}
 	slog.Debug("compatible gpu libraries", "compatible", compatible)
+
 	exe, err := os.Executable()
 	if err != nil {
 		return nil, fmt.Errorf("unable to lookup executable path: %w", err)
 	}
-
 	if eval, err := filepath.EvalSymlinks(exe); err == nil {
 		exe = eval
 	}
@@ -328,7 +349,6 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		if libraryPath, ok := os.LookupEnv(pathEnv); ok {
 			libraryPaths = append(libraryPaths, filepath.SplitList(libraryPath)...)
 		}
-
 		if len(compatible) > 0 {
 			c := compatible[0]
 			if libpath, ok := libs[c]; ok {
@@ -336,7 +356,6 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 				libraryPaths = append(libraryPaths, libpath)
 			}
 		}
-
 		// Note: we always put the dependency path first
 		// since this was the exact version we compiled/linked against
 		if gpus[0].DependencyPath != nil {
@@ -344,7 +363,6 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 			// assume gpus from the same library have the same dependency path
 			libraryPaths = append(gpus[0].DependencyPath, libraryPaths...)
 		}
-
 		// finally, add the root library path
 		libraryPaths = append(libraryPaths, discover.LibOllamaPath)
 
@@ -365,6 +383,25 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		}
 
 		s.cmd.Env = os.Environ()
+		// If CPU-only mode is active, remove GPU-related environment variables.
+		if opts.NumGPU == 0 {
+			filteredEnv := []string{}
+			for _, ev := range s.cmd.Env {
+				parts := strings.SplitN(ev, "=", 2)
+				if len(parts) < 2 {
+					continue
+				}
+				name := strings.ToUpper(parts[0])
+				keep := true
+				if slices.Contains(gpuVars, name) {
+					keep = false
+				}
+				if keep {
+					filteredEnv = append(filteredEnv, ev)
+				}
+			}
+			s.cmd.Env = filteredEnv
+		}
 		s.cmd.Stdout = os.Stdout
 		s.cmd.Stderr = s.status
 		s.cmd.SysProcAttr = LlamaServerSysProcAttr
@@ -375,7 +412,6 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		}
 		visibleDevicesEnv, visibleDevicesEnvVal := gpus.GetVisibleDevicesEnv()
 		pathEnvVal := strings.Join(libraryPaths, string(filepath.ListSeparator))
-
 		// Update or add the path and visible devices variable with our adjusted version
 		pathNeeded := true
 		devicesNeeded := visibleDevicesEnv != ""
