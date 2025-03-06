@@ -224,8 +224,8 @@ func GetGPUInfo() GpuInfoList {
 
 	}
 
-	slog.Debug("CUDA_VISIBLE_DEVICES(envconfig)", "", envconfig.CudaVisibleDevices())
-	slog.Debug("HIP_VISIBLE_DEVICES(envconfig)", "", envconfig.HipVisibleDevices())
+	slog.Debug("gpu environment variable", "CUDA_VISIBLE_DEVICES(envconfig)", envconfig.CudaVisibleDevices())
+	slog.Debug("gpu environment variable", "HIP_VISIBLE_DEVICES(envconfig)", envconfig.HipVisibleDevices())
 	// Proceed with GPU discovery if no GPU env variable forced CPU-only mode.
 	gpuMutex.Lock()
 	defer gpuMutex.Unlock()
