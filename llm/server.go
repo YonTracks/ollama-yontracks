@@ -118,7 +118,6 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 	for _, key := range gpuVars {
 		if val, ok := os.LookupEnv(key); ok {
 			if val == "-1" {
-				slog.Info(key + " is set to '-1', using CPU-only mode")
 				opts.NumGPU = 0
 				break // no need to check further once CPU-only mode is enabled
 			}

@@ -199,7 +199,6 @@ func GetGPUInfo() GpuInfoList {
 	}
 	for _, key := range gpuEnvVars {
 		if v := os.Getenv(key); v == "-1" {
-			slog.Info("Skipping GPU discovery: " + key + " is '-1', using CPU-only mode")
 			mem, err := GetCPUMem()
 			if err != nil {
 				slog.Warn("error looking up system memory", "error", err)
@@ -216,6 +215,7 @@ func GetGPUInfo() GpuInfoList {
 				},
 				CPUs: details,
 			}
+			slog.Info("Skipping GPU discovery: " + key + " is '-1', using CPU-only mode")
 			// Populate the global cpus slice so that GetSystemInfo() does not panic.
 			cpus = []CPUInfo{cpuInfo}
 			return GpuInfoList{cpuInfo.GpuInfo}
