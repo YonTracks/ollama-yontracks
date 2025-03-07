@@ -206,7 +206,7 @@ func GetGPUInfo() GpuInfoList {
 	for _, key := range gpuEnvVars {
 		v := envconfig.Var(key)
 		slog.Debug("GetGPUInfo: checking env variable", "key", key, "value", v)
-		if v == "" {
+		if v == "-1" {
 			slog.Info("Skipping GPU discovery: " + key + " is empty (or '-1'), using CPU-only mode")
 			mem, err := GetCPUMem()
 			if err != nil {

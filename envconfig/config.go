@@ -334,7 +334,7 @@ func Values() map[string]string {
 func Var(key string) string {
 	raw := os.Getenv(key)
 	trimmed := strings.Trim(strings.TrimSpace(raw), "\"'")
-	slog.Debug("Var: reading env variable", "key", key, "raw", raw, "trimmed", trimmed)
+	// slog.Debug("Var: reading env variable", "key", key, "raw", raw, "trimmed", trimmed)
 	// For GPU-related keys, if the value is "-1" or empty, return an empty string.
 	gpuKeys := map[string]bool{
 		"CUDA_VISIBLE_DEVICES":     true,
