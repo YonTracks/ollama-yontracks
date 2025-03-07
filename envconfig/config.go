@@ -20,19 +20,25 @@ func Host() *url.URL {
 	defaultPort := "11434"
 
 	s := strings.TrimSpace(Var("OLLAMA_HOST"))
+	slog.Debug("Host: raw OLLAMA_HOST", "value", s)
 	scheme, hostport, ok := strings.Cut(s, "://")
 	switch {
 	case !ok:
+		slog.Debug("Host: no scheme found, defaulting to http")
 		scheme, hostport = "http", s
 	case scheme == "http":
 		defaultPort = "80"
+		slog.Debug("Host: scheme set to http, using default port", "port", defaultPort)
 	case scheme == "https":
 		defaultPort = "443"
+		slog.Debug("Host: scheme set to https, using default port", "port", defaultPort)
 	}
 
 	hostport, path, _ := strings.Cut(hostport, "/")
+	slog.Debug("Host: after cutting path", "hostport", hostport, "path", path)
 	host, port, err := net.SplitHostPort(hostport)
 	if err != nil {
+		slog.Debug("Host: error splitting host and port, using defaults", "error", err, "hostport", hostport)
 		host, port = "127.0.0.1", defaultPort
 		if ip := net.ParseIP(strings.Trim(hostport, "[]")); ip != nil {
 			host = ip.String()
@@ -46,6 +52,7 @@ func Host() *url.URL {
 		port = defaultPort
 	}
 
+	slog.Debug("Host: final computed values", "scheme", scheme, "host", host, "port", port, "path", path)
 	return &url.URL{
 		Scheme: scheme,
 		Host:   net.JoinHostPort(host, port),
@@ -57,6 +64,7 @@ func Host() *url.URL {
 func AllowedOrigins() (origins []string) {
 	if s := Var("OLLAMA_ORIGINS"); s != "" {
 		origins = strings.Split(s, ",")
+		slog.Debug("AllowedOrigins: parsed OLLAMA_ORIGINS", "origins", origins)
 	}
 
 	for _, origin := range []string{"localhost", "127.0.0.1", "0.0.0.0"} {
@@ -75,7 +83,7 @@ func AllowedOrigins() (origins []string) {
 		"vscode-webview://*",
 		"vscode-file://*",
 	)
-
+	slog.Debug("AllowedOrigins: final origins list", "origins", origins)
 	return origins
 }
 
@@ -83,15 +91,19 @@ func AllowedOrigins() (origins []string) {
 // Default is $HOME/.ollama/models
 func Models() string {
 	if s := Var("OLLAMA_MODELS"); s != "" {
+		// slog.Debug("Models: using OLLAMA_MODELS from env", "path", s)
 		return s
 	}
 
 	home, err := os.UserHomeDir()
 	if err != nil {
+		slog.Error("Models: unable to determine user home directory", "error", err)
 		panic(err)
 	}
 
-	return filepath.Join(home, ".ollama", "models")
+	modelPath := filepath.Join(home, ".ollama", "models")
+	// slog.Debug("Models: default model path", "path", modelPath)
+	return modelPath
 }
 
 // KeepAlive returns the duration that models stay loaded in memory. KeepAlive can be configured via the OLLAMA_KEEP_ALIVE environment variable.
@@ -100,14 +112,20 @@ func Models() string {
 func KeepAlive() (keepAlive time.Duration) {
 	keepAlive = 5 * time.Minute
 	if s := Var("OLLAMA_KEEP_ALIVE"); s != "" {
+		slog.Debug("KeepAlive: raw value", "value", s)
 		if d, err := time.ParseDuration(s); err == nil {
 			keepAlive = d
+			slog.Debug("KeepAlive: parsed as duration", "duration", keepAlive)
 		} else if n, err := strconv.ParseInt(s, 10, 64); err == nil {
 			keepAlive = time.Duration(n) * time.Second
+			slog.Debug("KeepAlive: parsed as integer seconds", "duration", keepAlive)
+		} else {
+			slog.Warn("KeepAlive: unable to parse, using default", "value", s, "error", err)
 		}
 	}
 
 	if keepAlive < 0 {
+		slog.Debug("KeepAlive: negative value, treating as infinite")
 		return time.Duration(math.MaxInt64)
 	}
 
@@ -120,14 +138,20 @@ func KeepAlive() (keepAlive time.Duration) {
 func LoadTimeout() (loadTimeout time.Duration) {
 	loadTimeout = 5 * time.Minute
 	if s := Var("OLLAMA_LOAD_TIMEOUT"); s != "" {
+		slog.Debug("LoadTimeout: raw value", "value", s)
 		if d, err := time.ParseDuration(s); err == nil {
 			loadTimeout = d
+			slog.Debug("LoadTimeout: parsed as duration", "duration", loadTimeout)
 		} else if n, err := strconv.ParseInt(s, 10, 64); err == nil {
 			loadTimeout = time.Duration(n) * time.Second
+			slog.Debug("LoadTimeout: parsed as integer seconds", "duration", loadTimeout)
+		} else {
+			slog.Warn("LoadTimeout: unable to parse, using default", "value", s, "error", err)
 		}
 	}
 
 	if loadTimeout <= 0 {
+		slog.Debug("LoadTimeout: non-positive value, treating as infinite")
 		return time.Duration(math.MaxInt64)
 	}
 
@@ -137,14 +161,16 @@ func LoadTimeout() (loadTimeout time.Duration) {
 func Bool(k string) func() bool {
 	return func() bool {
 		if s := Var(k); s != "" {
+			slog.Debug("Bool: reading", "key", k, "raw", s)
 			b, err := strconv.ParseBool(s)
 			if err != nil {
+				slog.Warn("Bool: error parsing boolean, defaulting to true", "key", k, "value", s, "error", err)
 				return true
 			}
-
+			slog.Debug("Bool: parsed value", "key", k, "value", b)
 			return b
 		}
-
+		slog.Debug("Bool: key not set, defaulting to false", "key", k)
 		return false
 	}
 }
@@ -174,7 +200,9 @@ var (
 
 func String(s string) func() string {
 	return func() string {
-		return Var(s)
+		v := Var(s)
+		slog.Debug("String: reading", "key", s, "value", v)
+		return v
 	}
 }
 
@@ -191,13 +219,15 @@ var (
 func Uint(key string, defaultValue uint) func() uint {
 	return func() uint {
 		if s := Var(key); s != "" {
+			slog.Debug("Uint: reading", "key", key, "raw", s)
 			if n, err := strconv.ParseUint(s, 10, 64); err != nil {
-				slog.Warn("invalid environment variable, using default", "key", key, "value", s, "default", defaultValue)
+				slog.Warn("Uint: invalid environment variable, using default", "key", key, "value", s, "default", defaultValue)
 			} else {
+				slog.Debug("Uint: parsed value", "key", key, "value", n)
 				return uint(n)
 			}
 		}
-
+		slog.Debug("Uint: key not set, using default", "key", key, "default", defaultValue)
 		return defaultValue
 	}
 }
@@ -216,13 +246,15 @@ var (
 func Uint64(key string, defaultValue uint64) func() uint64 {
 	return func() uint64 {
 		if s := Var(key); s != "" {
+			slog.Debug("Uint64: reading", "key", key, "raw", s)
 			if n, err := strconv.ParseUint(s, 10, 64); err != nil {
-				slog.Warn("invalid environment variable, using default", "key", key, "value", s, "default", defaultValue)
+				slog.Warn("Uint64: invalid environment variable, using default", "key", key, "value", s, "default", defaultValue)
 			} else {
+				slog.Debug("Uint64: parsed value", "key", key, "value", n)
 				return n
 			}
 		}
-
+		slog.Debug("Uint64: key not set, using default", "key", key, "default", defaultValue)
 		return defaultValue
 	}
 }
@@ -280,6 +312,13 @@ func AsMap() map[string]EnvVar {
 		ret["OLLAMA_INTEL_GPU"] = EnvVar{"OLLAMA_INTEL_GPU", IntelGPU(), "Enable experimental Intel GPU detection"}
 	}
 
+	slog.Debug("AsMap: final environment variables map", "keys", func() []string {
+		keys := []string{}
+		for k := range ret {
+			keys = append(keys, k)
+		}
+		return keys
+	}())
 	return ret
 }
 
@@ -288,10 +327,14 @@ func Values() map[string]string {
 	for k, v := range AsMap() {
 		vals[k] = fmt.Sprintf("%v", v.Value)
 	}
+	slog.Debug("Values: computed values", "values", vals)
 	return vals
 }
 
 // Var returns an environment variable stripped of leading and trailing quotes or spaces
 func Var(key string) string {
-	return strings.Trim(strings.TrimSpace(os.Getenv(key)), "\"'")
+	raw := os.Getenv(key)
+	trimmed := strings.Trim(strings.TrimSpace(raw), "\"'")
+	slog.Debug("Var: reading env variable", "key", key, "raw", raw, "trimmed", trimmed)
+	return trimmed
 }
