@@ -338,7 +338,7 @@ func Var(key string) string {
 	// slog.Debug("Var: raw value", "key", key, "raw", raw)
 	// Extra check: if the raw value is exactly "\"\"", treat it as cpu-only mode.
 	if raw == "\"\"" {
-		slog.Debug("Var: raw value equals literal \"\"; treating as empty", "key", key)
+		slog.Debug("Var: raw value equals literal \"\"; treating as cpu only", "key", key)
 		raw = "-1"
 	}
 	trimmed := strings.Trim(strings.TrimSpace(raw), "\"'")
