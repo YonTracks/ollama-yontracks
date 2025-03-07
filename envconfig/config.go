@@ -330,21 +330,40 @@ func Values() map[string]string {
 	return vals
 }
 
-// Var returns an environment variable stripped of leading and trailing quotes or spaces.
-// For GPU-related keys, if the trimmed value is either "-1" or empty,
-// it is treated as if it were not set (returning "-1" to force CPU-only mode).
-func Var(key string) string {
-	raw := os.Getenv(key)
-	// slog.Debug("Var: raw value", "key", key, "raw", raw)
-	// Extra check: if the raw value is exactly "\"\"", treat it as cpu-only mode.
+// Invalid checks whether a raw GPU-related environment variable is invalid.
+// The only valid values are an empty string (CPU-only), "-1" (CPU-only), or "0" (first GPU).
+// Additionally, a raw value exactly equal to "\"\"" is considered invalid.
+func Invalid(raw string) bool {
+	// TODO: add GPU-related environment variable error handling to check for valid variables.
+	// If the raw value is exactly "\"\"", treat it as invalid.
 	if raw == "\"\"" {
-		slog.Debug("Var: raw value equals literal \"\"; treating as cpu only", "key", key)
-		raw = "-1"
+		return true
 	}
 	trimmed := strings.Trim(strings.TrimSpace(raw), "\"'")
-	// slog.Debug("Var: trimmed value", "key", key, "trimmed", trimmed)
+	if trimmed == "" || trimmed == "-1" || trimmed == "0" {
+		return false
+	}
+	return false // true
+}
 
-	// For GPU-related keys, treat both "-1" and "" as CPU-only mode.
+// Var returns an environment variable stripped of leading and trailing quotes or spaces.
+// For GPU-related keys, if the raw value is exactly "\"\"" or is invalid,
+// it is treated as if it were cpu only (returning "-1" to force CPU-only mode).
+func Var(key string) string {
+	raw := os.Getenv(key)
+	if isGPUKey(key) && (raw == "\"\"" || Invalid(raw)) {
+		slog.Debug("Var: raw value invalid or equals literal \"\"; treating as CPU-only", "key", key)
+		return "-1"
+	}
+	trimmed := strings.Trim(strings.TrimSpace(raw), "\"'")
+	if isGPUKey(key) && trimmed == "-1" {
+		slog.Debug("Var: GPU variable treated as CPU-only", "key", key, "value", trimmed)
+		return "-1"
+	}
+	return trimmed
+}
+
+func isGPUKey(key string) bool {
 	gpuKeys := map[string]bool{
 		"CUDA_VISIBLE_DEVICES":     true,
 		"HIP_VISIBLE_DEVICES":      true,
@@ -352,9 +371,5 @@ func Var(key string) string {
 		"GPU_DEVICE_ORDINAL":       true,
 		"HSA_OVERRIDE_GFX_VERSION": true,
 	}
-	if gpuKeys[key] && trimmed == "-1" {
-		slog.Debug("Var: GPU variable treated as CPU-only", "key", key, "value", trimmed)
-		return "-1"
-	}
-	return trimmed
+	return gpuKeys[key]
 }
