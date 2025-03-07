@@ -592,12 +592,11 @@ func loadCUDARTMgmt(cudartLibPaths []string) (int, *C.cudart_handle_t, string, e
 		C.cudart_init(lib, &resp)
 		if resp.err != nil {
 			err = fmt.Errorf("unable to load cudart library %s: %s", libPath, C.GoString(resp.err))
-			slog.Debug("loadCUDARTMgmt:", "error", err)
+			slog.Debug("loadCUDARTMgmt: error", "err", err.Error())
 			C.free(unsafe.Pointer(resp.err))
 		} else {
 			slog.Debug("loadCUDARTMgmt: successfully loaded", "libPath", libPath, "deviceCount", resp.num_devices)
-			err = nil
-			return int(resp.num_devices), &resp.ch, libPath, err
+			return int(resp.num_devices), &resp.ch, libPath, nil
 		}
 	}
 	return 0, nil, "", err

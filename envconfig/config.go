@@ -38,7 +38,7 @@ func Host() *url.URL {
 	slog.Debug("Host: after cutting path", "hostport", hostport, "path", path)
 	host, port, err := net.SplitHostPort(hostport)
 	if err != nil {
-		slog.Debug("Host: error splitting host and port, using defaults", "error", err, "hostport", hostport)
+		slog.Debug("Host: error splitting host and port, using defaults", "error", err.Error(), "hostport", hostport)
 		host, port = "127.0.0.1", defaultPort
 		if ip := net.ParseIP(strings.Trim(hostport, "[]")); ip != nil {
 			host = ip.String()
@@ -97,7 +97,7 @@ func Models() string {
 
 	home, err := os.UserHomeDir()
 	if err != nil {
-		slog.Error("Models: unable to determine user home directory", "error", err)
+		slog.Error("Models: unable to determine user home directory", "error", err.Error())
 		panic(err)
 	}
 
@@ -120,7 +120,7 @@ func KeepAlive() (keepAlive time.Duration) {
 			keepAlive = time.Duration(n) * time.Second
 			slog.Debug("KeepAlive: parsed as integer seconds", "duration", keepAlive)
 		} else {
-			slog.Warn("KeepAlive: unable to parse, using default", "value", s, "error", err)
+			slog.Warn("KeepAlive: unable to parse, using default", "value", s, "error", err.Error())
 		}
 	}
 
@@ -146,7 +146,7 @@ func LoadTimeout() (loadTimeout time.Duration) {
 			loadTimeout = time.Duration(n) * time.Second
 			slog.Debug("LoadTimeout: parsed as integer seconds", "duration", loadTimeout)
 		} else {
-			slog.Warn("LoadTimeout: unable to parse, using default", "value", s, "error", err)
+			slog.Warn("LoadTimeout: unable to parse, using default", "value", s, "error", err.Error())
 		}
 	}
 
@@ -164,7 +164,7 @@ func Bool(k string) func() bool {
 			slog.Debug("Bool: reading", "key", k, "raw", s)
 			b, err := strconv.ParseBool(s)
 			if err != nil {
-				slog.Warn("Bool: error parsing boolean, defaulting to true", "key", k, "value", s, "error", err)
+				slog.Warn("Bool: error parsing boolean, defaulting to true", "key", k, "value", s, "error", err.Error())
 				return true
 			}
 			slog.Debug("Bool: parsed value", "key", k, "value", b)
@@ -176,7 +176,7 @@ func Bool(k string) func() bool {
 }
 
 var (
-	// Debug enabled additional debug information.
+	// Debug enables additional debug information.
 	Debug = Bool("OLLAMA_DEBUG")
 	// FlashAttention enables the experimental flash attention feature.
 	FlashAttention = Bool("OLLAMA_FLASH_ATTENTION")
@@ -192,7 +192,7 @@ var (
 	IntelGPU = Bool("OLLAMA_INTEL_GPU")
 	// MultiUserCache optimizes prompt caching for multi-user scenarios.
 	MultiUserCache = Bool("OLLAMA_MULTIUSER_CACHE")
-	// Enable the new Ollama engine.
+	// NewEngine enables the new Ollama engine.
 	NewEngine = Bool("OLLAMA_NEW_ENGINE")
 	// ContextLength sets the default context length.
 	ContextLength = Uint("OLLAMA_CONTEXT_LENGTH", 2048)
@@ -233,13 +233,13 @@ func Uint(key string, defaultValue uint) func() uint {
 }
 
 var (
-	// NumParallel sets the number of parallel model requests. Configurable via OLLAMA_NUM_PARALLEL.
+	// NumParallel sets the number of parallel model requests.
 	NumParallel = Uint("OLLAMA_NUM_PARALLEL", 0)
-	// MaxRunners sets the maximum number of loaded models. Configurable via OLLAMA_MAX_LOADED_MODELS.
+	// MaxRunners sets the maximum number of loaded models.
 	MaxRunners = Uint("OLLAMA_MAX_LOADED_MODELS", 0)
-	// MaxQueue sets the maximum number of queued requests. Configurable via OLLAMA_MAX_QUEUE.
+	// MaxQueue sets the maximum number of queued requests.
 	MaxQueue = Uint("OLLAMA_MAX_QUEUE", 512)
-	// MaxVRAM sets a maximum VRAM override in bytes. Configurable via OLLAMA_MAX_VRAM.
+	// MaxVRAM sets a maximum VRAM override in bytes.
 	MaxVRAM = Uint("OLLAMA_MAX_VRAM", 0)
 )
 
@@ -259,7 +259,7 @@ func Uint64(key string, defaultValue uint64) func() uint64 {
 	}
 }
 
-// Set aside VRAM per GPU.
+// GpuOverhead reserves a portion of VRAM per GPU (in bytes).
 var GpuOverhead = Uint64("OLLAMA_GPU_OVERHEAD", 0)
 
 type EnvVar struct {
@@ -331,11 +331,20 @@ func Values() map[string]string {
 }
 
 // Var returns an environment variable stripped of leading and trailing quotes or spaces.
+// For GPU-related keys, if the trimmed value is either "-1" or empty,
+// it is treated as if it were not set (returning "-1" to force CPU-only mode).
 func Var(key string) string {
 	raw := os.Getenv(key)
+	// slog.Debug("Var: raw value", "key", key, "raw", raw)
+	// Extra check: if the raw value is exactly "\"\"", treat it as cpu-only mode.
+	if raw == "\"\"" {
+		slog.Debug("Var: raw value equals literal \"\"; treating as empty", "key", key)
+		raw = "-1"
+	}
 	trimmed := strings.Trim(strings.TrimSpace(raw), "\"'")
-	// slog.Debug("Var: reading env variable", "key", key, "raw", raw, "trimmed", trimmed)
-	// For GPU-related keys, if the value is "-1" or empty, return an empty string.
+	// slog.Debug("Var: trimmed value", "key", key, "trimmed", trimmed)
+
+	// For GPU-related keys, treat both "-1" and "" as CPU-only mode.
 	gpuKeys := map[string]bool{
 		"CUDA_VISIBLE_DEVICES":     true,
 		"HIP_VISIBLE_DEVICES":      true,
@@ -343,8 +352,8 @@ func Var(key string) string {
 		"GPU_DEVICE_ORDINAL":       true,
 		"HSA_OVERRIDE_GFX_VERSION": true,
 	}
-	if gpuKeys[key] && (trimmed == "-1" || trimmed == "") {
-		slog.Debug("Var: GPU variable treated as empty", "key", key)
+	if gpuKeys[key] && trimmed == "-1" {
+		slog.Debug("Var: GPU variable treated as CPU-only", "key", key, "value", trimmed)
 		return "-1"
 	}
 	return trimmed
