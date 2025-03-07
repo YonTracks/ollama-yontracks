@@ -345,7 +345,7 @@ func Var(key string) string {
 	}
 	if gpuKeys[key] && (trimmed == "-1" || trimmed == "") {
 		slog.Debug("Var: GPU variable treated as empty", "key", key)
-		return ""
+		return "-1"
 	}
 	return trimmed
 }
