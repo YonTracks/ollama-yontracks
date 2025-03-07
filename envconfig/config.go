@@ -48,7 +48,7 @@ func Host() *url.URL {
 	}
 
 	if n, err := strconv.ParseInt(port, 10, 32); err != nil || n > 65535 || n < 0 {
-		slog.Warn("invalid port, using default", "port", port, "default", defaultPort)
+		slog.Warn("Host: invalid port, using default", "port", port, "default", defaultPort)
 		port = defaultPort
 	}
 
@@ -190,11 +190,11 @@ var (
 	SchedSpread = Bool("OLLAMA_SCHED_SPREAD")
 	// IntelGPU enables experimental Intel GPU detection.
 	IntelGPU = Bool("OLLAMA_INTEL_GPU")
-	// MultiUserCache optimizes prompt caching for multi-user scenarios
+	// MultiUserCache optimizes prompt caching for multi-user scenarios.
 	MultiUserCache = Bool("OLLAMA_MULTIUSER_CACHE")
-	// Enable the new Ollama engine
+	// Enable the new Ollama engine.
 	NewEngine = Bool("OLLAMA_NEW_ENGINE")
-	// ContextLength sets the default context length
+	// ContextLength sets the default context length.
 	ContextLength = Uint("OLLAMA_CONTEXT_LENGTH", 2048)
 )
 
@@ -233,13 +233,13 @@ func Uint(key string, defaultValue uint) func() uint {
 }
 
 var (
-	// NumParallel sets the number of parallel model requests. NumParallel can be configured via the OLLAMA_NUM_PARALLEL environment variable.
+	// NumParallel sets the number of parallel model requests. Configurable via OLLAMA_NUM_PARALLEL.
 	NumParallel = Uint("OLLAMA_NUM_PARALLEL", 0)
-	// MaxRunners sets the maximum number of loaded models. MaxRunners can be configured via the OLLAMA_MAX_LOADED_MODELS environment variable.
+	// MaxRunners sets the maximum number of loaded models. Configurable via OLLAMA_MAX_LOADED_MODELS.
 	MaxRunners = Uint("OLLAMA_MAX_LOADED_MODELS", 0)
-	// MaxQueue sets the maximum number of queued requests. MaxQueue can be configured via the OLLAMA_MAX_QUEUE environment variable.
+	// MaxQueue sets the maximum number of queued requests. Configurable via OLLAMA_MAX_QUEUE.
 	MaxQueue = Uint("OLLAMA_MAX_QUEUE", 512)
-	// MaxVRAM sets a maximum VRAM override in bytes. MaxVRAM can be configured via the OLLAMA_MAX_VRAM environment variable.
+	// MaxVRAM sets a maximum VRAM override in bytes. Configurable via OLLAMA_MAX_VRAM.
 	MaxVRAM = Uint("OLLAMA_MAX_VRAM", 0)
 )
 
@@ -259,7 +259,7 @@ func Uint64(key string, defaultValue uint64) func() uint64 {
 	}
 }
 
-// Set aside VRAM per GPU
+// Set aside VRAM per GPU.
 var GpuOverhead = Uint64("OLLAMA_GPU_OVERHEAD", 0)
 
 type EnvVar struct {
@@ -297,7 +297,6 @@ func AsMap() map[string]EnvVar {
 	}
 
 	if runtime.GOOS != "windows" {
-		// Windows environment variables are case-insensitive so there's no need to duplicate them
 		ret["http_proxy"] = EnvVar{"http_proxy", String("http_proxy")(), "HTTP proxy"}
 		ret["https_proxy"] = EnvVar{"https_proxy", String("https_proxy")(), "HTTPS proxy"}
 		ret["no_proxy"] = EnvVar{"no_proxy", String("no_proxy")(), "No proxy"}
@@ -331,10 +330,22 @@ func Values() map[string]string {
 	return vals
 }
 
-// Var returns an environment variable stripped of leading and trailing quotes or spaces
+// Var returns an environment variable stripped of leading and trailing quotes or spaces.
 func Var(key string) string {
 	raw := os.Getenv(key)
 	trimmed := strings.Trim(strings.TrimSpace(raw), "\"'")
 	slog.Debug("Var: reading env variable", "key", key, "raw", raw, "trimmed", trimmed)
+	// For GPU-related keys, if the value is "-1" or empty, return an empty string.
+	gpuKeys := map[string]bool{
+		"CUDA_VISIBLE_DEVICES":     true,
+		"HIP_VISIBLE_DEVICES":      true,
+		"ROCR_VISIBLE_DEVICES":     true,
+		"GPU_DEVICE_ORDINAL":       true,
+		"HSA_OVERRIDE_GFX_VERSION": true,
+	}
+	if gpuKeys[key] && (trimmed == "-1" || trimmed == "") {
+		slog.Debug("Var: GPU variable treated as empty", "key", key)
+		return ""
+	}
 	return trimmed
 }
