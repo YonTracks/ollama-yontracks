@@ -330,20 +330,19 @@ func Values() map[string]string {
 	return vals
 }
 
-// Invalid checks whether a raw GPU-related environment variable is invalid.
-// The only valid values are an empty string (CPU-only), "-1" (CPU-only), or "0" (first GPU).
+// isValid checks whether a raw GPU-related environment variable is valid.
+// The only valid values are an empty string (default), "-1" (CPU-only), or "0" (first GPU).
 // Additionally, a raw value exactly equal to "\"\"" is considered invalid.
-func Invalid(raw string) bool {
-	// TODO: add GPU-related environment variable error handling to check for valid variables.
+func isValid(raw string) bool {
 	// If the raw value is exactly "\"\"", treat it as invalid.
 	if raw == "\"\"" {
-		return true
+		return false
 	}
 	trimmed := strings.Trim(strings.TrimSpace(raw), "\"'")
 	if trimmed == "" || trimmed == "-1" || trimmed == "0" {
-		return false
+		return true
 	}
-	return false // true
+	return true // return true while additional system checks are used in the gpu discovery code.
 }
 
 // Var returns an environment variable stripped of leading and trailing quotes or spaces.
@@ -351,8 +350,8 @@ func Invalid(raw string) bool {
 // it is treated as if it were cpu only (returning "-1" to force CPU-only mode).
 func Var(key string) string {
 	raw := os.Getenv(key)
-	if isGPUKey(key) && (raw == "\"\"" || Invalid(raw)) {
-		slog.Debug("Var: raw value invalid or equals literal \"\"; treating as CPU-only", "key", key)
+	if isGPUKey(key) && !isValid(raw) {
+		slog.Debug("Var: raw value invalid; treating as CPU-only", "key", key, "value", raw)
 		return "-1"
 	}
 	trimmed := strings.Trim(strings.TrimSpace(raw), "\"'")
