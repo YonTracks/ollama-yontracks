@@ -333,19 +333,28 @@ func fallbackToCPU() GpuInfoList {
 // If any GPU-related environment variable (via envconfig.Var) returns "-1",
 // CPU-only mode is used
 func GetGPUInfo() GpuInfoList {
-	// NEW: Update CUDA_VISIBLE_DEVICES if it appears to be a raw UUID missing the "GPU-" prefix.
-	// Perform system-level GPU detection using lspci (Linux) or wmic (Windows)
-	if v := os.Getenv("CUDA_VISIBLE_DEVICES"); v != "\"\"" {
-		if v := os.Getenv("CUDA_VISIBLE_DEVICES"); v != "" && v != "-1" {
+	// NEW: Normalize GPU environment variables if they appear to be raw UUIDs missing the "GPU-" prefix.
+	// Only the variables expected to be UUIDs are normalized here. GPU_DEVICE_ORDINAL and HSA_OVERRIDE_GFX_VERSION
+	// typically use numeric or other formats and are not updated.
+	keysToNormalize := []string{
+		"CUDA_VISIBLE_DEVICES",
+		"HIP_VISIBLE_DEVICES",
+		"ROCR_VISIBLE_DEVICES",
+	}
+
+	for _, key := range keysToNormalize {
+		v := envconfig.Var(key)
+		if v != "" && v != "-1" {
 			// If the value is not an integer and doesn't already start with "GPU-",
 			// assume it's a raw UUID and update it to include the prefix.
 			if _, err := strconv.Atoi(v); err != nil && !strings.HasPrefix(v, "GPU-") {
 				newVal := "GPU-" + v
-				slog.Info("Updating CUDA_VISIBLE_DEVICES to expected format", "old", v, "new", newVal)
-				os.Setenv("CUDA_VISIBLE_DEVICES", newVal)
+				slog.Info("Updating "+key+" to expected format", "old", v, "new", newVal)
+				os.Setenv(key, newVal)
 			}
 		}
 	}
+	// Perform system-level GPU detection using lspci (Linux) or wmic (Windows)
 	var detectedGPUs []string
 	var err error
 	if runtime.GOOS == "linux" {
