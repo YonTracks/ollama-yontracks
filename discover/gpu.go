@@ -47,7 +47,7 @@ const (
 
 // NEW: ValidateGpuEnv checks whether the provided GPU environment variable value is valid
 // based on the discovered GPUs. If the value is a numeric index, it must be between 0 and len(discovered)-1.
-// If it is a UUID it must match one of the discovered GPU IDs.
+// If it is a UUID it must match one of the discovered GPU IDs (allowing a missing or extra "GPU-" prefix).
 // If the env value is "-1", then it forces CPU-only mode.
 // If the env is not set (empty string) then it returns an empty string (meaning “use default”).
 // Otherwise it returns "-1" to force CPU-only mode.
@@ -68,14 +68,26 @@ func ValidateGpuEnv(key string, discovered []GpuInfo) string {
 		}
 		return envVal
 	}
+	slog.Debug("ValidateGpuEnv", "key", key, "processed envVal", envVal)
+	for i, gpu := range discovered {
+		slog.Debug("Discovered GPU", "index", i, "ID", gpu.ID)
+	}
 	// Otherwise, assume it is a GPU UUID.
+	// Check for an exact match or a match when adjusting for the "GPU-" prefix.
 	for _, gpu := range discovered {
 		// Accept if the discovered ID exactly matches the env value...
 		if gpu.ID == envVal {
+			slog.Debug("Discovered GPU ID Match", "ID", gpu.ID)
 			return envVal
 		}
-		// ...or if the discovered ID has a "GPU-" prefix and the env value matches after that.
+		// If the discovered GPU ID has the "GPU-" prefix and envVal doesn't, try comparing after stripping the prefix.
 		if strings.HasPrefix(gpu.ID, "GPU-") && gpu.ID[4:] == envVal {
+			slog.Debug("Discovered GPU ID Match after adding 'GPU-' prefix", "ID", gpu.ID)
+			return gpu.ID
+		}
+		// Alternatively, if the env value starts with "GPU-" and the discovered GPU ID doesn't, compare after stripping.
+		if strings.HasPrefix(envVal, "GPU-") && envVal[4:] == gpu.ID {
+			slog.Debug("Discovered GPU ID Match after stripping 'GPU-' prefix", "ID", gpu.ID)
 			return gpu.ID
 		}
 	}
@@ -321,7 +333,22 @@ func fallbackToCPU() GpuInfoList {
 // If any GPU-related environment variable (via envconfig.Var) returns "-1",
 // CPU-only mode is used
 func GetGPUInfo() GpuInfoList {
-	// NEW: Perform system-level GPU detection using lspci (Linux) or wmic (Windows)
+	// NEW: Update CUDA_VISIBLE_DEVICES if it appears to be a raw UUID missing the "GPU-" prefix.
+	// Perform system-level GPU detection using lspci (Linux) or wmic (Windows)
+	if v := os.Getenv("CUDA_VISIBLE_DEVICES"); v != "" && v != "-1" {
+		// If the value is not an integer and doesn't already start with "GPU-",
+		// assume it's a raw UUID and update it to include the prefix.
+		if _, err := strconv.Atoi(v); err != nil && !strings.HasPrefix(v, "GPU-") {
+			newVal := "GPU-" + v
+			slog.Info("Updating CUDA_VISIBLE_DEVICES to expected format", "old", v, "new", newVal)
+			os.Setenv("CUDA_VISIBLE_DEVICES", newVal)
+		}
+	}
+
+	gpuMutex.Lock()
+	defer gpuMutex.Unlock()
+	needRefresh := true
+
 	var detectedGPUs []string
 	var err error
 	if runtime.GOOS == "linux" {
@@ -345,7 +372,6 @@ func GetGPUInfo() GpuInfoList {
 	}
 	for _, key := range gpuEnvVars {
 		v := envconfig.Var(key)
-		// slog.Debug("GetGPUInfo: checking env variable", "key", key, "value", v)
 		if v == "-1" {
 			slog.Info("Skipping GPU discovery: " + key + " is invalid (or '-1'), using CPU-only mode")
 			mem, err := GetCPUMem()
@@ -364,8 +390,8 @@ func GetGPUInfo() GpuInfoList {
 				},
 				CPUs: details,
 			}
-			slog.Info("GetGPUInfo: CPU-only mode activated due to " + key)
 			// Populate global cpus slice
+			slog.Info("GetGPUInfo: CPU-only mode activated due to " + key)
 			gpuMutex.Lock()
 			cpus = []CPUInfo{cpuInfo}
 			gpuMutex.Unlock()
@@ -373,12 +399,7 @@ func GetGPUInfo() GpuInfoList {
 		}
 	}
 
-	slog.Debug("GetGPUInfo:", "CUDA_VISIBLE_DEVICES (envconfig)", envconfig.CudaVisibleDevices())
-	slog.Debug("GetGPUInfo:", "HIP_VISIBLE_DEVICES (envconfig)", envconfig.HipVisibleDevices())
 	// Proceed with GPU discovery if no GPU env variable forced CPU-only mode
-	gpuMutex.Lock()
-	defer gpuMutex.Unlock()
-	needRefresh := true
 	var cHandles *cudaHandles
 	var oHandles *oneapiHandles
 	defer func() {
@@ -786,6 +807,7 @@ func loadNVCUDAMgmt(nvcudaLibPaths []string) (int, *C.nvcuda_handle_t, string, e
 	var err error
 	for _, libPath := range nvcudaLibPaths {
 		lib := C.CString(libPath)
+		slog.Debug("loadNVCUDAMgmt:", "lib", lib, "response", &resp)
 		defer C.free(unsafe.Pointer(lib))
 		C.nvcuda_init(lib, &resp)
 		if resp.err != nil {
