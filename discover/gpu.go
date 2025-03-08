@@ -333,27 +333,19 @@ func fallbackToCPU() GpuInfoList {
 // If any GPU-related environment variable (via envconfig.Var) returns "-1",
 // CPU-only mode is used
 func GetGPUInfo() GpuInfoList {
-	gpuMutex.Lock()
-	defer gpuMutex.Unlock()
-	needRefresh := true
-
 	// NEW: Update CUDA_VISIBLE_DEVICES if it appears to be a raw UUID missing the "GPU-" prefix.
 	// Perform system-level GPU detection using lspci (Linux) or wmic (Windows)
-	if v := os.Getenv("CUDA_VISIBLE_DEVICES"); v == "\"\"" {
-		newVal := "-1"
-		slog.Info("Updating CUDA_VISIBLE_DEVICES to expected format", "old", v, "new", newVal)
-		os.Setenv("CUDA_VISIBLE_DEVICES", newVal)
-	}
-	if v := os.Getenv("CUDA_VISIBLE_DEVICES"); v != "" && v != "-1" {
-		// If the value is not an integer and doesn't already start with "GPU-",
-		// assume it's a raw UUID and update it to include the prefix.
-		if _, err := strconv.Atoi(v); err != nil && !strings.HasPrefix(v, "GPU-") {
-			newVal := "GPU-" + v
-			slog.Info("Updating CUDA_VISIBLE_DEVICES to expected format", "old", v, "new", newVal)
-			os.Setenv("CUDA_VISIBLE_DEVICES", newVal)
+	if v := os.Getenv("CUDA_VISIBLE_DEVICES"); v != "\"\"" {
+		if v := os.Getenv("CUDA_VISIBLE_DEVICES"); v != "" && v != "-1" {
+			// If the value is not an integer and doesn't already start with "GPU-",
+			// assume it's a raw UUID and update it to include the prefix.
+			if _, err := strconv.Atoi(v); err != nil && !strings.HasPrefix(v, "GPU-") {
+				newVal := "GPU-" + v
+				slog.Info("Updating CUDA_VISIBLE_DEVICES to expected format", "old", v, "new", newVal)
+				os.Setenv("CUDA_VISIBLE_DEVICES", newVal)
+			}
 		}
 	}
-
 	var detectedGPUs []string
 	var err error
 	if runtime.GOOS == "linux" {
@@ -404,6 +396,9 @@ func GetGPUInfo() GpuInfoList {
 		}
 	}
 
+	gpuMutex.Lock()
+	defer gpuMutex.Unlock()
+	needRefresh := true
 	// Proceed with GPU discovery if no GPU env variable forced CPU-only mode
 	var cHandles *cudaHandles
 	var oHandles *oneapiHandles
