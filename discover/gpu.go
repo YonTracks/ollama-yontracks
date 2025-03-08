@@ -333,8 +333,17 @@ func fallbackToCPU() GpuInfoList {
 // If any GPU-related environment variable (via envconfig.Var) returns "-1",
 // CPU-only mode is used
 func GetGPUInfo() GpuInfoList {
+	gpuMutex.Lock()
+	defer gpuMutex.Unlock()
+	needRefresh := true
+
 	// NEW: Update CUDA_VISIBLE_DEVICES if it appears to be a raw UUID missing the "GPU-" prefix.
 	// Perform system-level GPU detection using lspci (Linux) or wmic (Windows)
+	if v := os.Getenv("CUDA_VISIBLE_DEVICES"); v == "\"\"" {
+		newVal := "-1"
+		slog.Info("Updating CUDA_VISIBLE_DEVICES to expected format", "old", v, "new", newVal)
+		os.Setenv("CUDA_VISIBLE_DEVICES", newVal)
+	}
 	if v := os.Getenv("CUDA_VISIBLE_DEVICES"); v != "" && v != "-1" {
 		// If the value is not an integer and doesn't already start with "GPU-",
 		// assume it's a raw UUID and update it to include the prefix.
@@ -344,10 +353,6 @@ func GetGPUInfo() GpuInfoList {
 			os.Setenv("CUDA_VISIBLE_DEVICES", newVal)
 		}
 	}
-
-	gpuMutex.Lock()
-	defer gpuMutex.Unlock()
-	needRefresh := true
 
 	var detectedGPUs []string
 	var err error
@@ -807,7 +812,6 @@ func loadNVCUDAMgmt(nvcudaLibPaths []string) (int, *C.nvcuda_handle_t, string, e
 	var err error
 	for _, libPath := range nvcudaLibPaths {
 		lib := C.CString(libPath)
-		slog.Debug("loadNVCUDAMgmt:", "lib", lib, "response", &resp)
 		defer C.free(unsafe.Pointer(lib))
 		C.nvcuda_init(lib, &resp)
 		if resp.err != nil {
