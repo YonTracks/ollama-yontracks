@@ -45,9 +45,31 @@ const (
 	// TODO OneAPI minimum memory
 )
 
+func init() {
+	// Normalize GPU-related environment variables early.
+	keysToNormalize := []string{
+		"CUDA_VISIBLE_DEVICES",
+		"HIP_VISIBLE_DEVICES",
+		"ROCR_VISIBLE_DEVICES",
+	}
+	for _, key := range keysToNormalize {
+		v := envconfig.Var(key)
+		// Skip if empty or CPU-only mode.
+		if v == "" || v == "-1" {
+			continue
+		}
+		// If the value is not an integer and doesn't already start with "GPU-", update it.
+		if _, err := strconv.Atoi(v); err != nil && !strings.HasPrefix(v, "GPU-") {
+			newVal := "GPU-" + v
+			slog.Info("Early normalization: updating "+key+" to expected format", "old", v, "new", newVal)
+			os.Setenv(key, newVal)
+		}
+	}
+}
+
 // NEW: ValidateGpuEnv checks whether the provided GPU environment variable value is valid
 // based on the discovered GPUs. If the value is a numeric index, it must be between 0 and len(discovered)-1.
-// If it is a UUID it must match one of the discovered GPU IDs (allowing a missing or extra "GPU-" prefix).
+// If it is a UUID it must match one of the discovered GPU IDs (ignoring an optional "GPU-" prefix).
 // If the env value is "-1", then it forces CPU-only mode.
 // If the env is not set (empty string) then it returns an empty string (meaning “use default”).
 // Otherwise it returns "-1" to force CPU-only mode.
@@ -72,23 +94,28 @@ func ValidateGpuEnv(key string, discovered []GpuInfo) string {
 	for i, gpu := range discovered {
 		slog.Debug("Discovered GPU", "index", i, "ID", gpu.ID)
 	}
-	// Otherwise, assume it is a GPU UUID.
-	// Check for an exact match or a match when adjusting for the "GPU-" prefix.
-	for _, gpu := range discovered {
-		// Accept if the discovered ID exactly matches the env value...
+	// If the value starts with "GPU-", compare the trimmed value with discovered IDs.
+	if strings.HasPrefix(envVal, "GPU-") {
+		trimmed := envVal[4:]
+		for i, gpu := range discovered {
+			// Compare the discovered GPU ID with and without the prefix.
+			if gpu.ID == trimmed || (strings.HasPrefix(gpu.ID, "GPU-") && gpu.ID[4:] == trimmed) {
+				slog.Debug("Matched GPU with index", "index", i, "ID", gpu.ID)
+				os.Setenv(key, strconv.Itoa(i))
+				return strconv.Itoa(i)
+			}
+		}
+		// No match found: return "-1"
+		slog.Warn("Invalid "+key+" value: no matching GPU UUID found after stripping prefix", "value", envVal)
+		return "-1"
+	}
+	// Otherwise, assume it is a GPU UUID without prefix.
+	for i, gpu := range discovered {
 		if gpu.ID == envVal {
-			slog.Debug("Discovered GPU ID Match", "ID", gpu.ID)
-			return envVal
-		}
-		// If the discovered GPU ID has the "GPU-" prefix and envVal doesn't, try comparing after stripping the prefix.
-		if strings.HasPrefix(gpu.ID, "GPU-") && gpu.ID[4:] == envVal {
-			slog.Debug("Discovered GPU ID Match after adding 'GPU-' prefix", "ID", gpu.ID)
-			return gpu.ID
-		}
-		// Alternatively, if the env value starts with "GPU-" and the discovered GPU ID doesn't, compare after stripping.
-		if strings.HasPrefix(envVal, "GPU-") && envVal[4:] == gpu.ID {
-			slog.Debug("Discovered GPU ID Match after stripping 'GPU-' prefix", "ID", gpu.ID)
-			return gpu.ID
+			slog.Debug("Discovered GPU ID Match", "index", i, "ID", gpu.ID)
+			// Optionally, update the env to the numeric index
+			os.Setenv(key, strconv.Itoa(i))
+			return strconv.Itoa(i)
 		}
 	}
 	slog.Warn("Invalid "+key+" value: no matching GPU UUID found", "value", envVal)
@@ -344,14 +371,15 @@ func GetGPUInfo() GpuInfoList {
 
 	for _, key := range keysToNormalize {
 		v := envconfig.Var(key)
-		if v != "" && v != "-1" {
-			// If the value is not an integer and doesn't already start with "GPU-",
-			// assume it's a raw UUID and update it to include the prefix.
-			if _, err := strconv.Atoi(v); err != nil && !strings.HasPrefix(v, "GPU-") {
-				newVal := "GPU-" + v
-				slog.Info("Updating "+key+" to expected format", "old", v, "new", newVal)
-				os.Setenv(key, newVal)
-			}
+		// Skip if empty or CPU-only mode.
+		if v == "" || v == "-1" {
+			continue
+		}
+		// If the value is not an integer and doesn't already start with "GPU-", update it.
+		if _, err := strconv.Atoi(v); err != nil && !strings.HasPrefix(v, "GPU-") {
+			newVal := "GPU-" + v
+			slog.Info("Updating "+key+" to expected format", "old", v, "new", newVal)
+			os.Setenv(key, newVal)
 		}
 	}
 	// Perform system-level GPU detection using lspci (Linux) or wmic (Windows)
