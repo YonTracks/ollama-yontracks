@@ -14,8 +14,9 @@ import (
 	"time"
 )
 
-// Host returns the scheme and host. Host can be configured via the OLLAMA_HOST environment variable.
-// Default is scheme "http" and host "127.0.0.1:11434"
+// Host returns the scheme and host.
+// Host can be configured via the OLLAMA_HOST environment variable.
+// Default is scheme "http" and host "127.0.0.1:11434".
 func Host() *url.URL {
 	defaultPort := "11434"
 
@@ -60,7 +61,8 @@ func Host() *url.URL {
 	}
 }
 
-// AllowedOrigins returns a list of allowed origins. AllowedOrigins can be configured via the OLLAMA_ORIGINS environment variable.
+// AllowedOrigins returns a list of allowed origins.
+// AllowedOrigins can be configured via the OLLAMA_ORIGINS environment variable.
 func AllowedOrigins() (origins []string) {
 	if s := Var("OLLAMA_ORIGINS"); s != "" {
 		origins = strings.Split(s, ",")
@@ -87,8 +89,9 @@ func AllowedOrigins() (origins []string) {
 	return origins
 }
 
-// Models returns the path to the models directory. Models directory can be configured via the OLLAMA_MODELS environment variable.
-// Default is $HOME/.ollama/models
+// Models returns the path to the models directory.
+// Models directory can be configured via the OLLAMA_MODELS environment variable.
+// Default is $HOME/.ollama/models.
 func Models() string {
 	if s := Var("OLLAMA_MODELS"); s != "" {
 		// slog.Debug("Models: using OLLAMA_MODELS from env", "path", s)
@@ -106,7 +109,8 @@ func Models() string {
 	return modelPath
 }
 
-// KeepAlive returns the duration that models stay loaded in memory. KeepAlive can be configured via the OLLAMA_KEEP_ALIVE environment variable.
+// KeepAlive returns the duration that models stay loaded in memory.
+// KeepAlive can be configured via the OLLAMA_KEEP_ALIVE environment variable.
 // Negative values are treated as infinite. Zero is treated as no keep alive.
 // Default is 5 minutes.
 func KeepAlive() (keepAlive time.Duration) {
@@ -132,7 +136,8 @@ func KeepAlive() (keepAlive time.Duration) {
 	return keepAlive
 }
 
-// LoadTimeout returns the duration for stall detection during model loads. LoadTimeout can be configured via the OLLAMA_LOAD_TIMEOUT environment variable.
+// LoadTimeout returns the duration for stall detection during model loads.
+// LoadTimeout can be configured via the OLLAMA_LOAD_TIMEOUT environment variable.
 // Zero or Negative values are treated as infinite.
 // Default is 5 minutes.
 func LoadTimeout() (loadTimeout time.Duration) {
@@ -331,30 +336,66 @@ func Values() map[string]string {
 }
 
 // isValid checks whether a raw GPU-related environment variable is valid.
-// The only valid values are an empty string (default), "-1" (CPU-only), or "0" (first GPU).
-// Additionally, a raw value exactly equal to "\"\"" is considered invalid.
+// The only valid values are an empty string (which means “use default”),
+// "-1" (CPU-only), or a numeric value (e.g. "0") or a value starting with "GPU-"
+// (optionally representing a GPU UUID). A raw value exactly equal to "\"\"" is considered invalid.
 func isValid(raw string) bool {
-	// If the raw value is exactly "\"\"", treat it as invalid.
-	if raw == "\"\"" {
+	// Trim whitespace first.
+	trimmed := strings.TrimSpace(raw)
+	// Remove wrapping quotes if present.
+	if len(trimmed) >= 2 {
+		if (trimmed[0] == '"' && trimmed[len(trimmed)-1] == '"') ||
+			(trimmed[0] == '\'' && trimmed[len(trimmed)-1] == '\'') {
+			trimmed = trimmed[1 : len(trimmed)-1]
+		}
+	}
+	// Empty values should be considered invalid (they will be handled as “default” later).
+	if trimmed == "" {
 		return false
 	}
-	trimmed := strings.Trim(strings.TrimSpace(raw), "\"'")
-	if trimmed == "" || trimmed == "-1" || trimmed == "0" {
+	// Allow CPU-only mode.
+	if trimmed == "-1" {
 		return true
 	}
-	return true // return true while additional system checks are used in the gpu discovery code.
+	// Allow numeric values.
+	if _, err := strconv.Atoi(trimmed); err == nil {
+		return true
+	}
+	// Allow values starting with "GPU-" or valid UUID formats.
+	if strings.HasPrefix(trimmed, "GPU-") {
+		// Optionally add more UUID validation here.
+		return true
+	}
+	// Otherwise, it’s invalid.
+	return false
 }
 
 // Var returns an environment variable stripped of leading and trailing quotes or spaces.
 // For GPU-related keys, if the raw value is exactly "\"\"" or is invalid,
-// it is treated as if it were cpu only (returning "-1" to force CPU-only mode).
+// it is treated as if it were CPU-only (returning "-1" to force CPU-only mode).
+// If the variable is not set at all, it returns an empty string (which means “use default”).
 func Var(key string) string {
+	// If the environment variable is not set at all, return empty string.
 	raw := os.Getenv(key)
-	if isGPUKey(key) && !isValid(raw) {
+	if raw == "" {
+		return ""
+	}
+
+	// Remove matching quotes if present.
+	if len(raw) >= 2 {
+		if (raw[0] == '"' && raw[len(raw)-1] == '"') ||
+			(raw[0] == '\'' && raw[len(raw)-1] == '\'') {
+			raw = raw[1 : len(raw)-1]
+		}
+	}
+	trimmed := strings.TrimSpace(raw)
+
+	// For GPU-related keys, if the trimmed value is not empty and is invalid, force CPU-only.
+	if isGPUKey(key) && trimmed != "" && !isValid(trimmed) {
 		slog.Debug("Var: raw value invalid; treating as CPU-only", "key", key, "value", raw)
 		return "-1"
 	}
-	trimmed := strings.Trim(strings.TrimSpace(raw), "\"'")
+	// If the GPU key is explicitly set to "-1", force CPU-only.
 	if isGPUKey(key) && trimmed == "-1" {
 		slog.Debug("Var: GPU variable treated as CPU-only", "key", key, "value", trimmed)
 		return "-1"

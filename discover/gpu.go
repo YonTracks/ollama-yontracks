@@ -42,11 +42,11 @@ type oneapiHandles struct {
 const (
 	cudaMinimumMemory = 457 * format.MebiByte
 	rocmMinimumMemory = 457 * format.MebiByte
-	// TODO OneAPI minimum memory
+	// TODO: OneAPI minimum memory
 )
 
+// init normalizes GPU-related environment variables early.
 func init() {
-	// Normalize GPU-related environment variables early.
 	keysToNormalize := []string{
 		"CUDA_VISIBLE_DEVICES",
 		"HIP_VISIBLE_DEVICES",
@@ -67,68 +67,87 @@ func init() {
 	}
 }
 
-// NEW: ValidateGpuEnv checks whether the provided GPU environment variable value is valid
-// based on the discovered GPUs. If the value is a numeric index, it must be between 0 and len(discovered)-1.
-// If it is a UUID it must match one of the discovered GPU IDs (ignoring an optional "GPU-" prefix).
-// If the env value is "-1", then it forces CPU-only mode.
-// If the env is not set (empty string) then it returns an empty string (meaning “use default”).
-// Otherwise it returns "-1" to force CPU-only mode.
+// ValidateGpuEnv checks whether the provided GPU environment variable value is valid
+// based on the discovered GPUs. This function now supports comma-separated tokens,
+// where each token can be a numeric index or a GPU UUID (optionally prefixed with "GPU-").
+// Each token is normalized and validated as follows:
+//   - If a token is a numeric index, it must be between 0 and len(discovered)-1.
+//   - If a token is a UUID, it must match one of the discovered GPU IDs (ignoring an optional "GPU-" prefix).
+//   - If any token is "-1", then the entire value forces CPU-only mode.
+//
+// If the env value is not set (empty string), then it returns an empty string (meaning "use default").
+// Otherwise, if any token is invalid, it returns "-1" to force CPU-only mode.
+// The helper normalizeGPUEnvValue trims whitespace and removes any matching wrapping quotes.
+func normalizeGPUEnvValue(val string) string {
+	trimmed := strings.TrimSpace(val)
+	if len(trimmed) >= 2 {
+		if (trimmed[0] == '"' && trimmed[len(trimmed)-1] == '"') ||
+			(trimmed[0] == '\'' && trimmed[len(trimmed)-1] == '\'') {
+			trimmed = trimmed[1 : len(trimmed)-1]
+		}
+	}
+	return trimmed
+}
+
 func ValidateGpuEnv(key string, discovered []GpuInfo) string {
-	envVal := envconfig.Var(key)
-	if envVal == "" {
+	// Normalize the full value and split on commas.
+	raw := envconfig.Var(key)
+	normalized := normalizeGPUEnvValue(raw)
+	if normalized == "" {
 		// Not set, so use default (all GPUs).
 		return ""
 	}
-	if envVal == "-1" {
+	if normalized == "-1" {
 		return "-1"
 	}
-	// Try to parse as an integer index.
-	if index, err := strconv.Atoi(envVal); err == nil {
-		if index < 0 || index >= len(discovered) {
-			slog.Warn("Invalid "+key+" value: index out of range", "value", envVal, "gpuCount", len(discovered))
+
+	parts := strings.Split(normalized, ",")
+	var validIndices []string
+	for _, part := range parts {
+		token := normalizeGPUEnvValue(part)
+		if token == "-1" {
+			// If any token explicitly forces CPU-only, then force CPU-only mode.
 			return "-1"
 		}
-		return envVal
-	}
-	slog.Debug("ValidateGpuEnv", "key", key, "processed envVal", envVal)
-	for i, gpu := range discovered {
-		slog.Debug("Discovered GPU", "index", i, "ID", gpu.ID)
-	}
-	// If the value starts with "GPU-", compare the trimmed value with discovered IDs.
-	if strings.HasPrefix(envVal, "GPU-") {
-		trimmed := envVal[4:]
+		// Try to parse the token as an integer index.
+		if index, err := strconv.Atoi(token); err == nil {
+			if index < 0 || index >= len(discovered) {
+				slog.Warn("Invalid "+key+" value: index out of range", "value", token, "gpuCount", len(discovered))
+				return "-1"
+			}
+			validIndices = append(validIndices, strconv.Itoa(index))
+			continue
+		}
+		// Unconditionally trim the "GPU-" prefix.
+		token = strings.TrimPrefix(token, "GPU-")
+		// Look for a matching GPU UUID among the discovered GPUs.
+		found := false
 		for i, gpu := range discovered {
-			// Compare the discovered GPU ID with and without the prefix.
-			if gpu.ID == trimmed || (strings.HasPrefix(gpu.ID, "GPU-") && gpu.ID[4:] == trimmed) {
-				slog.Debug("Matched GPU with index", "index", i, "ID", gpu.ID)
-				os.Setenv(key, strconv.Itoa(i))
-				return strconv.Itoa(i)
+			id := strings.TrimPrefix(gpu.ID, "GPU-")
+			if id == token {
+				validIndices = append(validIndices, strconv.Itoa(i))
+				found = true
+				break
 			}
 		}
-		// No match found: return "-1"
-		slog.Warn("Invalid "+key+" value: no matching GPU UUID found after stripping prefix", "value", envVal)
-		return "-1"
-	}
-	// Otherwise, assume it is a GPU UUID without prefix.
-	for i, gpu := range discovered {
-		if gpu.ID == envVal {
-			slog.Debug("Discovered GPU ID Match", "index", i, "ID", gpu.ID)
-			// Optionally, update the env to the numeric index
-			os.Setenv(key, strconv.Itoa(i))
-			return strconv.Itoa(i)
+		if !found {
+			slog.Warn("Invalid "+key+" value: no matching GPU UUID found", "value", token)
+			return "-1"
 		}
 	}
-	slog.Warn("Invalid "+key+" value: no matching GPU UUID found", "value", envVal)
-	return "-1"
+	// Join the valid indices into a comma-separated string and update the environment variable.
+	result := strings.Join(validIndices, ",")
+	os.Setenv(key, result)
+	return result
 }
 
 // ------------------------------
-// NEW: System-Level GPU Detection Helpers
+// System-Level GPU Detection Helpers
 // ------------------------------
 
 // CheckGPUsLinux detects GPUs using lspci on Linux.
-// NEW: This function runs the "lspci -nn" command and parses the output to look for
-// lines containing "VGA compatible controller" or "3D controller", which typically indicate a GPU.
+// It runs the "lspci -nn" command and parses the output to look for lines containing
+// "VGA compatible controller" or "3D controller", which typically indicate a GPU.
 func CheckGPUsLinux() ([]string, error) {
 	cmd := exec.Command("lspci", "-nn")
 	output, err := cmd.Output()
@@ -147,7 +166,7 @@ func CheckGPUsLinux() ([]string, error) {
 }
 
 // CheckGPUsWindows detects GPUs using wmic on Windows.
-// NEW: This function runs the "wmic path win32_videocontroller get name" command and
+// It runs the "wmic path win32_videocontroller get name" command and
 // extracts the GPU names from the output.
 func CheckGPUsWindows() ([]string, error) {
 	cmd := exec.Command("wmic", "path", "win32_videocontroller", "get", "name")
@@ -179,40 +198,38 @@ var (
 	rocmGPUs      []RocmGPUInfo
 	oneapiGPUs    []OneapiGPUInfo
 
-	// If any discovered GPUs are incompatible, report why
+	// If any discovered GPUs are incompatible, report why.
 	unsupportedGPUs []UnsupportedGPUInfo
 
-	// Keep track of errors during bootstrapping so that if GPUs are missing
-	// they expected to be present this may explain why
+	// Keep track of errors during bootstrapping so that if GPUs are missing,
+	// this may explain why.
 	bootstrapErrors []error
 )
 
 var (
-	// With our current CUDA compile flags, older than 5.0 will not work properly.
-	// (string values used to allow ldflags overrides at build time)
+	// With our current CUDA compile flags, GPUs older than 5.0 will not work properly.
+	// (string values are used to allow ldflags overrides at build time)
 	CudaComputeMajorMin = "5"
 	CudaComputeMinorMin = "0"
 )
 
 var RocmComputeMajorMin = "9"
 
-// TODO: find a better way to detect iGPU instead of minimum memory
-const IGPUMemLimit = 1 * format.GibiByte // 512G is what they typically report, so anything less than 1G must be iGPU
+// TODO: find a better way to detect iGPU instead of using minimum memory.
+// IGPUMemLimit: 1 GiB; anything less is considered an integrated GPU.
+const IGPUMemLimit = 1 * format.GibiByte
 
 // ------------------------------
 // Original functions (initCudaHandles, initOneAPIHandles, etc.) remain unchanged
 // ------------------------------
 
-// initCudaHandles initializes CUDA handles
-// Note: gpuMutex must already be held
+// initCudaHandles initializes CUDA handles.
+// Note: gpuMutex must already be held.
 func initCudaHandles() *cudaHandles {
-	// TODO: - if the ollama build is CPU only, don't do these checks as they're irrelevant and confusing
-
+	// TODO: if the Ollama build is CPU-only, skip these checks.
 	slog.Debug("initCudaHandles: starting CUDA library search")
 	cHandles := &cudaHandles{}
-	// Short Circuit if we already know which library to use
-	// ignore bootstrap errors in this case since we already recorded them
-	// Use cached libraries if available
+	// Use cached libraries if available.
 	if nvmlLibPath != "" {
 		slog.Debug("initCudaHandles: using cached NVML lib", "nvmlLibPath", nvmlLibPath)
 		cHandles.nvml, _, _ = loadNVMLMgmt([]string{nvmlLibPath})
@@ -231,7 +248,7 @@ func initCudaHandles() *cudaHandles {
 
 	var cudartMgmtPatterns []string
 
-	// Aligned with driver, we can't carry as payloads
+	// Use bundled libraries first.
 	nvcudaMgmtPatterns := NvcudaGlobs
 	cudartMgmtPatterns = append(cudartMgmtPatterns, filepath.Join(LibOllamaPath, "cuda_v*", CudartMgmtName))
 	cudartMgmtPatterns = append(cudartMgmtPatterns, CudartGlobs...)
@@ -287,8 +304,8 @@ func initCudaHandles() *cudaHandles {
 	return cHandles
 }
 
-// initOneAPIHandles bootstraps the oneAPI library
-// Note: gpuMutex must already be held
+// initOneAPIHandles bootstraps the oneAPI library.
+// Note: gpuMutex must already be held.
 func initOneAPIHandles() *oneapiHandles {
 	slog.Debug("initOneAPIHandles: starting oneAPI library search")
 	oHandles := &oneapiHandles{}
@@ -310,7 +327,7 @@ func initOneAPIHandles() *oneapiHandles {
 	return oHandles
 }
 
-// GetCPUInfo returns CPU info wrapped as a GpuInfoList
+// GetCPUInfo returns CPU info wrapped as a GpuInfoList.
 func GetCPUInfo() GpuInfoList {
 	gpuMutex.Lock()
 	if !bootstrapped {
@@ -353,15 +370,13 @@ func fallbackToCPU() GpuInfoList {
 }
 
 // ------------------------------
-// Updated GetGPUInfo function with system-level GPU checks and env validation
-// ------------------------------
-
-// GetGPUInfo performs GPU discovery
+// Updated GetGPUInfo function with system-level GPU checks and environment variable validation.
+// It now also supports comma-separated GPU selection (for multi-GPU setups).
 // If any GPU-related environment variable (via envconfig.Var) returns "-1",
-// CPU-only mode is used
+// CPU-only mode is used.
 func GetGPUInfo() GpuInfoList {
-	// NEW: Normalize GPU environment variables if they appear to be raw UUIDs missing the "GPU-" prefix.
-	// Only the variables expected to be UUIDs are normalized here. GPU_DEVICE_ORDINAL and HSA_OVERRIDE_GFX_VERSION
+	// Normalize GPU environment variables if they appear to be raw UUIDs missing the "GPU-" prefix.
+	// Only for variables expected to be UUIDs. GPU_DEVICE_ORDINAL and HSA_OVERRIDE_GFX_VERSION
 	// typically use numeric or other formats and are not updated.
 	keysToNormalize := []string{
 		"CUDA_VISIBLE_DEVICES",
@@ -382,7 +397,7 @@ func GetGPUInfo() GpuInfoList {
 			os.Setenv(key, newVal)
 		}
 	}
-	// Perform system-level GPU detection using lspci (Linux) or wmic (Windows)
+	// Perform system-level GPU detection using lspci (Linux) or wmic (Windows).
 	var detectedGPUs []string
 	var err error
 	if runtime.GOOS == "linux" {
@@ -396,7 +411,7 @@ func GetGPUInfo() GpuInfoList {
 		slog.Info("System detected GPUs:", "gpus", detectedGPUs)
 	}
 
-	// Original GPU-related environment variable check
+	// Check GPU-related environment variables.
 	gpuEnvVars := []string{
 		"CUDA_VISIBLE_DEVICES",
 		"HIP_VISIBLE_DEVICES",
@@ -424,7 +439,6 @@ func GetGPUInfo() GpuInfoList {
 				},
 				CPUs: details,
 			}
-			// Populate global cpus slice
 			slog.Info("GetGPUInfo: CPU-only mode activated due to " + key)
 			gpuMutex.Lock()
 			cpus = []CPUInfo{cpuInfo}
@@ -436,7 +450,7 @@ func GetGPUInfo() GpuInfoList {
 	gpuMutex.Lock()
 	defer gpuMutex.Unlock()
 	needRefresh := true
-	// Proceed with GPU discovery if no GPU env variable forced CPU-only mode
+	// Proceed with GPU discovery if no GPU environment variable forces CPU-only mode.
 	var cHandles *cudaHandles
 	var oHandles *oneapiHandles
 	defer func() {
@@ -453,7 +467,7 @@ func GetGPUInfo() GpuInfoList {
 		}
 		if oHandles != nil {
 			if oHandles.oneapi != nil {
-				// TODO - is this needed?
+				// TODO: is this needed?
 				C.oneapi_release(*oHandles.oneapi)
 			}
 		}
@@ -494,10 +508,10 @@ func GetGPUInfo() GpuInfoList {
 			},
 		}
 
-		// Load ALL libraries
+		// Load all libraries.
 		cHandles = initCudaHandles()
 
-		// NVIDIA GPU discovery
+		// NVIDIA GPU discovery.
 		for i := range cHandles.deviceCount {
 			if cHandles.cudart != nil || cHandles.nvcuda != nil {
 				gpuInfo := CudaGPUInfo{
@@ -531,11 +545,10 @@ func GetGPUInfo() GpuInfoList {
 				gpuInfo.DriverMinor = driverMinor
 				variant := cudaVariant(gpuInfo)
 
-				// Start with our bundled libraries
+				// Use bundled libraries first.
 				if variant != "" {
 					variantPath := filepath.Join(LibOllamaPath, "cuda_"+variant)
 					if _, err := os.Stat(variantPath); err == nil {
-						// Put the variant directory first in the search path to avoid runtime linking to the wrong library
 						slog.Debug("GetGPUInfo: using variant directory", "variantPath", variantPath)
 						gpuInfo.DependencyPath = append([]string{variantPath}, gpuInfo.DependencyPath...)
 					}
@@ -549,8 +562,7 @@ func GetGPUInfo() GpuInfoList {
 					continue
 				}
 
-				// query the management library as well so we can record any skew between the two
-				// which represents overhead on the GPU we must set aside on subsequent updates
+				// Query the management library to determine OS VRAM overhead.
 				if cHandles.nvml != nil {
 					uuid := C.CString(gpuInfo.ID)
 					defer C.free(unsafe.Pointer(uuid))
@@ -573,20 +585,18 @@ func GetGPUInfo() GpuInfoList {
 					}
 				}
 
-				// TODO: - potentially sort on our own algorithm instead of what the underlying GPU library does...
 				slog.Debug("GetGPUInfo: adding discovered CUDA GPU", "id", gpuInfo.ID)
 				cudaGPUs = append(cudaGPUs, gpuInfo)
 			}
 		}
 
-		// Intel oneAPI GPU discovery
+		// Intel oneAPI GPU discovery.
 		if envconfig.IntelGPU() {
 			slog.Debug("GetGPUInfo: attempting Intel GPU discovery")
 			oHandles = initOneAPIHandles()
 			if oHandles != nil && oHandles.oneapi != nil {
 				for d := range oHandles.oneapi.num_drivers {
 					if oHandles.oneapi == nil {
-						// shouldn't happen
 						slog.Warn("GetGPUInfo: nil oneAPI handle despite driver count", "count", int(oHandles.oneapi.num_drivers))
 						continue
 					}
@@ -599,10 +609,9 @@ func GetGPUInfo() GpuInfoList {
 							driverIndex: int(d),
 							gpuIndex:    int(i),
 						}
-						// TODO: - split bootstrapping from updating free memory
 						C.oneapi_check_vram(*oHandles.oneapi, C.int(d), C.int(i), &memInfo)
-						// TODO: - convert this to MinimumMemory based on testing...
-						totalFreeMem := float64(memInfo.free) * 0.95 // work-around: leave some reserve vram for mkl lib used in ggml-sycl backend.
+						// Work-around: reserve 5% of VRAM.
+						totalFreeMem := float64(memInfo.free) * 0.95
 						memInfo.free = C.uint64_t(totalFreeMem)
 						gpuInfo.TotalMemory = uint64(memInfo.total)
 						gpuInfo.FreeMemory = uint64(memInfo.free)
@@ -616,7 +625,7 @@ func GetGPUInfo() GpuInfoList {
 			}
 		}
 
-		// ROCm GPU discovery
+		// ROCm GPU discovery.
 		rocmGPUs, err = AMDGetGPUInfo()
 		if err != nil {
 			slog.Warn("GetGPUInfo: error in ROCm GPU discovery", "error", err)
@@ -627,10 +636,10 @@ func GetGPUInfo() GpuInfoList {
 			slog.Info("GetGPUInfo: no compatible GPUs were discovered")
 		}
 
-		// TODO: verify we have runners for the discovered GPUs, filter out any that aren't supported with good error messages
+		// TODO: verify we have runners for the discovered GPUs; filter out unsupported GPUs with clear error messages.
 	}
 
-	// NEW: If no GPUs were detected by the libraries but system-level tools detected GPUs, warn the user.
+	// Warn if no GPUs were detected by libraries but system tools detected GPUs.
 	if len(cudaGPUs) == 0 && len(rocmGPUs) == 0 && len(oneapiGPUs) == 0 && len(detectedGPUs) > 0 {
 		slog.Warn("GPUs detected by system tools, but not by libraries. Possible driver/library issue?", "gpus", detectedGPUs)
 	}
@@ -708,7 +717,7 @@ func GetGPUInfo() GpuInfoList {
 			slog.Debug("GetGPUInfo: problem refreshing ROCm free memory", "error", err)
 		}
 	}
-	// After discovery, 'resp' contains the final list of discovered GPUs.
+	// After discovery, compile the final list of GPUs.
 	resp := []GpuInfo{}
 	for _, gpu := range cudaGPUs {
 		resp = append(resp, gpu.GpuInfo)
@@ -721,40 +730,38 @@ func GetGPUInfo() GpuInfoList {
 	}
 
 	if len(resp) > 0 {
-		// Validate CUDA_VISIBLE_DEVICES.
+		// Validate each GPU-related environment variable.
 		validCuda := ValidateGpuEnv("CUDA_VISIBLE_DEVICES", resp)
 		if validCuda == "-1" {
 			slog.Warn("CUDA_VISIBLE_DEVICES env value is invalid, falling back to CPU-only mode")
 			return fallbackToCPU()
 		}
-		// Validate HIP_VISIBLE_DEVICES.
 		validHip := ValidateGpuEnv("HIP_VISIBLE_DEVICES", resp)
 		if validHip == "-1" {
 			slog.Warn("HIP_VISIBLE_DEVICES env value is invalid, falling back to CPU-only mode")
 			return fallbackToCPU()
 		}
-		// Validate ROCR_VISIBLE_DEVICES.
 		validRocr := ValidateGpuEnv("ROCR_VISIBLE_DEVICES", resp)
 		if validRocr == "-1" {
 			slog.Warn("ROCR_VISIBLE_DEVICES env value is invalid, falling back to CPU-only mode")
 			return fallbackToCPU()
 		}
-		// Validate GPU_DEVICE_ORDINAL.
 		validOrdinal := ValidateGpuEnv("GPU_DEVICE_ORDINAL", resp)
 		if validOrdinal == "-1" {
 			slog.Warn("GPU_DEVICE_ORDINAL env value is invalid, falling back to CPU-only mode")
 			return fallbackToCPU()
 		}
-		// (Optionally, add a check for HSA_OVERRIDE_GFX_VERSION if needed.)
+		// Optionally, add a check for HSA_OVERRIDE_GFX_VERSION if needed.
 	}
 
 	slog.Debug("GetGPUInfo: final discovered GPU info", "count", len(resp))
 	return resp
 }
 
-// FindGPULibs searches for GPU libraries using a set of glob patterns
+// FindGPULibs searches for GPU libraries using a set of glob patterns.
+// It searches bundled libraries, the system's LD_LIBRARY_PATH or PATH, and
+// any default patterns provided by the caller.
 func FindGPULibs(baseLibName string, defaultPatterns []string) []string {
-	// Multiple GPU libraries may exist, and some may not work, so keep trying until we exhaust them
 	gpuLibPaths := []string{}
 	slog.Debug("FindGPULibs: searching for GPU library", "name", baseLibName)
 
@@ -769,7 +776,7 @@ func FindGPULibs(baseLibName string, defaultPatterns []string) []string {
 		ldPaths = strings.Split(os.Getenv("LD_LIBRARY_PATH"), string(os.PathListSeparator))
 	}
 
-	// then search the system's LD_LIBRARY_PATH
+	// Then search the system's library paths.
 	for _, p := range ldPaths {
 		p, err := filepath.Abs(p)
 		if err != nil {
@@ -778,7 +785,7 @@ func FindGPULibs(baseLibName string, defaultPatterns []string) []string {
 		patterns = append(patterns, filepath.Join(p, baseLibName))
 	}
 
-	// Finally, search and add the default patterns, which are provided by the caller
+	// Finally, append the default patterns.
 	patterns = append(patterns, defaultPatterns...)
 	slog.Debug("FindGPULibs: using glob patterns", "globs", patterns)
 	for _, pattern := range patterns {
@@ -786,11 +793,9 @@ func FindGPULibs(baseLibName string, defaultPatterns []string) []string {
 			slog.Debug("FindGPULibs: skipping PhysX cuda library path", "path", pattern)
 			continue
 		}
-		// Ignore glob discovery errors for now
 		matches, _ := filepath.Glob(pattern)
 		for _, match := range matches {
-			// Resolve any links so we don't try the same lib multiple times
-			// and weed out any dups across globs
+			// Resolve links and avoid duplicates.
 			libPath := match
 			tmp := match
 			var err error
@@ -814,8 +819,8 @@ func FindGPULibs(baseLibName string, defaultPatterns []string) []string {
 	return gpuLibPaths
 }
 
-// loadCUDARTMgmt bootstraps the cudart library
-// Returns: num devices, handle, libPath, error
+// loadCUDARTMgmt bootstraps the CUDART library.
+// Returns: number of devices, handle, library path, error.
 func loadCUDARTMgmt(cudartLibPaths []string) (int, *C.cudart_handle_t, string, error) {
 	var resp C.cudart_init_resp_t
 	resp.ch.verbose = getVerboseState()
@@ -836,8 +841,8 @@ func loadCUDARTMgmt(cudartLibPaths []string) (int, *C.cudart_handle_t, string, e
 	return 0, nil, "", err
 }
 
-// loadNVCUDAMgmt bootstraps the nvcuda library
-// Returns: num devices, handle, libPath, error
+// loadNVCUDAMgmt bootstraps the NVCUDA library.
+// Returns: number of devices, handle, library path, error.
 func loadNVCUDAMgmt(nvcudaLibPaths []string) (int, *C.nvcuda_handle_t, string, error) {
 	var resp C.nvcuda_init_resp_t
 	resp.ch.verbose = getVerboseState()
@@ -847,7 +852,6 @@ func loadNVCUDAMgmt(nvcudaLibPaths []string) (int, *C.nvcuda_handle_t, string, e
 		defer C.free(unsafe.Pointer(lib))
 		C.nvcuda_init(lib, &resp)
 		if resp.err != nil {
-			// Decide what log level based on the type of error message to help users understand why
 			switch resp.cudaErr {
 			case C.CUDA_ERROR_INSUFFICIENT_DRIVER, C.CUDA_ERROR_SYSTEM_DRIVER_MISMATCH:
 				err = fmt.Errorf("version mismatch between driver and cuda driver library - reboot or upgrade may be required: library %s", libPath)
@@ -876,8 +880,8 @@ func loadNVCUDAMgmt(nvcudaLibPaths []string) (int, *C.nvcuda_handle_t, string, e
 	return 0, nil, "", err
 }
 
-// loadNVMLMgmt bootstraps the NVML management library
-// Returns: handle, libPath, error
+// loadNVMLMgmt bootstraps the NVML management library.
+// Returns: handle, library path, error.
 func loadNVMLMgmt(nvmlLibPaths []string) (*C.nvml_handle_t, string, error) {
 	var resp C.nvml_init_resp_t
 	resp.ch.verbose = getVerboseState()
@@ -898,8 +902,8 @@ func loadNVMLMgmt(nvmlLibPaths []string) (*C.nvml_handle_t, string, error) {
 	return nil, "", err
 }
 
-// loadOneapiMgmt bootstraps the oneAPI library
-// Returns: num devices, handle, libPath, error
+// loadOneapiMgmt bootstraps the oneAPI library.
+// Returns: number of devices, handle, library path, error.
 func loadOneapiMgmt(oneapiLibPaths []string) (int, *C.oneapi_handle_t, string, error) {
 	var resp C.oneapi_init_resp_t
 	num_devices := 0
@@ -932,11 +936,9 @@ func getVerboseState() C.uint16_t {
 	return C.uint16_t(0)
 }
 
-// GetVisibleDevicesEnv returns the environment variable name and value to select GPUs based on discovered GPU info
-// Given the list of GPUs this instantiation is targeted for,
-// figure out the visible devices environment variable
-//
-// If different libraries are detected, the first one is what we used to load the libraries
+// GetVisibleDevicesEnv returns the environment variable name and value to select GPUs based on discovered GPU info.
+// Given the list of GPUs this instance targets, it determines the visible devices environment variable.
+// For different libraries the required filtering may vary.
 func (l GpuInfoList) GetVisibleDevicesEnv() (string, string) {
 	if len(l) == 0 {
 		slog.Debug("GetVisibleDevicesEnv: empty GPU list")
@@ -955,7 +957,7 @@ func (l GpuInfoList) GetVisibleDevicesEnv() (string, string) {
 	}
 }
 
-// GetSystemInfo collects system memory and GPU discovery information
+// GetSystemInfo collects system memory and GPU discovery information.
 func GetSystemInfo() SystemInfo {
 	gpus := GetGPUInfo()
 	gpuMutex.Lock()
@@ -964,7 +966,7 @@ func GetSystemInfo() SystemInfo {
 	for _, err := range bootstrapErrors {
 		discoveryErrors = append(discoveryErrors, err.Error())
 	}
-	// If only CPU info is present, return an empty GPU slice
+	// If only CPU info is present, return an empty GPU slice.
 	if len(gpus) == 1 && gpus[0].Library == "cpu" {
 		slog.Debug("GetSystemInfo: only CPU info present, returning empty GPU list")
 		gpus = []GpuInfo{}
