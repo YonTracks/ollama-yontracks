@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
@@ -44,6 +45,14 @@ const (
 	rocmMinimumMemory = 457 * format.MebiByte
 	// TODO: OneAPI minimum memory
 )
+
+// uuidRegex matches a standard UUID format.
+var uuidRegex = regexp.MustCompile(`^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$`)
+
+// isUUID returns true if s matches a UUID pattern.
+func isUUID(s string) bool {
+	return uuidRegex.MatchString(s)
+}
 
 // init normalizes GPU-related environment variables early.
 func init() {
@@ -90,6 +99,7 @@ func normalizeGPUEnvValue(val string) string {
 }
 
 func ValidateGpuEnv(key string, discovered []GpuInfo) string {
+	slog.Debug("ValidateGpuEnv: discovered GPUs count", "key", key, "count", len(discovered))
 	// Normalize the full value and split on commas.
 	raw := envconfig.Var(key)
 	normalized := normalizeGPUEnvValue(raw)
@@ -105,6 +115,14 @@ func ValidateGpuEnv(key string, discovered []GpuInfo) string {
 	var validIndices []string
 	for _, part := range parts {
 		token := normalizeGPUEnvValue(part)
+
+		// If token is a raw UUID (i.e. looks like one and doesn't already have "GPU-")
+		// then add the prefix.
+		if isUUID(token) && !strings.HasPrefix(token, "GPU-") {
+			token = "GPU-" + token
+			slog.Debug("ValidateGpuEnv: normalized raw UUID", "key", key, "token", token)
+		}
+
 		if token == "-1" {
 			// If any token explicitly forces CPU-only, then force CPU-only mode.
 			return "-1"
@@ -118,13 +136,13 @@ func ValidateGpuEnv(key string, discovered []GpuInfo) string {
 			validIndices = append(validIndices, strconv.Itoa(index))
 			continue
 		}
-		// Unconditionally trim the "GPU-" prefix.
-		token = strings.TrimPrefix(token, "GPU-")
+		// Unconditionally trim the "GPU-" prefix for comparison.
+		trimmedToken := strings.TrimPrefix(token, "GPU-")
 		// Look for a matching GPU UUID among the discovered GPUs.
 		found := false
 		for i, gpu := range discovered {
 			id := strings.TrimPrefix(gpu.ID, "GPU-")
-			if id == token {
+			if id == trimmedToken {
 				validIndices = append(validIndices, strconv.Itoa(i))
 				found = true
 				break

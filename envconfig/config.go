@@ -8,11 +8,15 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
 	"time"
 )
+
+// uuidRegex matches a standard UUID format.
+var uuidRegex = regexp.MustCompile(`^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$`)
 
 // Host returns the scheme and host.
 // Host can be configured via the OLLAMA_HOST environment variable.
@@ -94,7 +98,6 @@ func AllowedOrigins() (origins []string) {
 // Default is $HOME/.ollama/models.
 func Models() string {
 	if s := Var("OLLAMA_MODELS"); s != "" {
-		// slog.Debug("Models: using OLLAMA_MODELS from env", "path", s)
 		return s
 	}
 
@@ -105,7 +108,6 @@ func Models() string {
 	}
 
 	modelPath := filepath.Join(home, ".ollama", "models")
-	// slog.Debug("Models: default model path", "path", modelPath)
 	return modelPath
 }
 
@@ -340,48 +342,38 @@ func Values() map[string]string {
 // "-1" (CPU-only), or a numeric value (e.g. "0") or a value starting with "GPU-"
 // (optionally representing a GPU UUID). A raw value exactly equal to "\"\"" is considered invalid.
 func isValid(raw string) bool {
-	// Trim whitespace first.
 	trimmed := strings.TrimSpace(raw)
-	// Remove wrapping quotes if present.
 	if len(trimmed) >= 2 {
 		if (trimmed[0] == '"' && trimmed[len(trimmed)-1] == '"') ||
 			(trimmed[0] == '\'' && trimmed[len(trimmed)-1] == '\'') {
 			trimmed = trimmed[1 : len(trimmed)-1]
 		}
 	}
-	// Empty values should be considered invalid (they will be handled as “default” later).
 	if trimmed == "" {
 		return false
 	}
-	// Allow CPU-only mode.
 	if trimmed == "-1" {
 		return true
 	}
-	// Allow numeric values.
 	if _, err := strconv.Atoi(trimmed); err == nil {
 		return true
 	}
-	// Allow values starting with "GPU-" or valid UUID formats.
 	if strings.HasPrefix(trimmed, "GPU-") {
-		// Optionally add more UUID validation here.
 		return true
 	}
-	// Otherwise, it’s invalid.
 	return false
 }
 
 // Var returns an environment variable stripped of leading and trailing quotes or spaces.
-// For GPU-related keys, if the raw value is exactly "\"\"" or is invalid,
-// it is treated as if it were CPU-only (returning "-1" to force CPU-only mode).
-// If the variable is not set at all, it returns an empty string (which means “use default”).
+// For GPU-related keys, if the raw value looks like a raw UUID (without "GPU-"),
+// it is normalized by adding the "GPU-" prefix.
+// If the variable is not set at all, it returns an empty string (meaning "use default").
+// For GPU keys, if the value is invalid, it returns "-1" to force CPU-only mode.
 func Var(key string) string {
-	// If the environment variable is not set at all, return empty string.
 	raw := os.Getenv(key)
 	if raw == "" {
 		return ""
 	}
-
-	// Remove matching quotes if present.
 	if len(raw) >= 2 {
 		if (raw[0] == '"' && raw[len(raw)-1] == '"') ||
 			(raw[0] == '\'' && raw[len(raw)-1] == '\'') {
@@ -390,12 +382,18 @@ func Var(key string) string {
 	}
 	trimmed := strings.TrimSpace(raw)
 
-	// For GPU-related keys, if the trimmed value is not empty and is invalid, force CPU-only.
+	// Normalize raw UUIDs for GPU-related keys.
+	if isGPUKey(key) && !strings.HasPrefix(trimmed, "GPU-") && uuidRegex.MatchString(trimmed) {
+		normalized := "GPU-" + trimmed
+		slog.Debug("Var: normalizing GPU UUID", "key", key, "raw", trimmed, "normalized", normalized)
+		os.Setenv(key, normalized)
+		trimmed = normalized
+	}
+
 	if isGPUKey(key) && trimmed != "" && !isValid(trimmed) {
 		slog.Debug("Var: raw value invalid; treating as CPU-only", "key", key, "value", raw)
 		return "-1"
 	}
-	// If the GPU key is explicitly set to "-1", force CPU-only.
 	if isGPUKey(key) && trimmed == "-1" {
 		slog.Debug("Var: GPU variable treated as CPU-only", "key", key, "value", trimmed)
 		return "-1"
