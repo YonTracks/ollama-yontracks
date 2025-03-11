@@ -135,7 +135,6 @@ func SpawnServer(ctx context.Context, command string) (chan int, error) {
 	done := make(chan int)
 
 	go func() {
-		// Keep the server running unless we're shuttind down the app
 		crashCount := 0
 		for {
 			slog.Info("starting server...")
@@ -159,10 +158,18 @@ func SpawnServer(ctx context.Context, command string) (chan int, error) {
 				done <- code
 				return
 			default:
+				// Check for critical driver error
+				// If detected, log and exit loop preventing orphaned server processes and crash looping
+				// TODO: auto correct the issues, and respawn
+				if code == 3221225477 {
+					slog.Warn(fmt.Sprintf("server crash %d - exit code %d ", crashCount, code))
+					slog.Error("Critical driver error detected (check GPU env variables!). Exiting server loop.")
+					done <- code
+					return
+				}
 				crashCount++
 				slog.Warn(fmt.Sprintf("server crash %d - exit code %d - respawning", crashCount, code))
 				time.Sleep(500 * time.Millisecond * time.Duration(crashCount))
-				break
 			}
 		}
 	}()

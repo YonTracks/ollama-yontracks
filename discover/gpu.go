@@ -172,10 +172,10 @@ func ValidateGpuEnv(key string, discovered []GpuInfo) string {
 		if index, err := strconv.Atoi(token); err == nil {
 			if index < 0 || index >= len(filtered) {
 				slog.Warn("Invalid "+key+" value: index out of range", "value", token, "gpuCount", len(filtered))
-				// Instead of just unsetting, update to default (first device) since the current index is invalid.
+				// Update environment variable to default (first device) and restart via lifecyle/server.go.
 				defaultValue := "0"
 				os.Setenv(key, defaultValue)
-				slog.Info("Updated " + key + " to default value: " + defaultValue + ". A restart may be required for the change to take effect.")
+				slog.Info("Updated " + key + " to default value: " + defaultValue)
 				return defaultValue
 			}
 			validIndices = append(validIndices, strconv.Itoa(index))
@@ -195,9 +195,9 @@ func ValidateGpuEnv(key string, discovered []GpuInfo) string {
 		}
 		if !found {
 			slog.Warn("Invalid "+key+" value: no matching GPU UUID found", "value", token)
-			// Unset the variable so that the system uses the default GPU selection.
+			// Unset the environment variable and restart via lifecycle/server.go.
 			os.Unsetenv(key)
-			slog.Info("Environment variable " + key + " has been unset to force default GPU selection. A restart may be required for the change to take effect.")
+			slog.Info("Environment variable " + key + " has been unset.")
 			return ""
 		}
 	}
