@@ -98,28 +98,6 @@ func isUUID(s string) bool {
 	return uuidRegex.MatchString(s)
 }
 
-// init normalizes GPU-related environment variables early.
-func init() {
-	keysToNormalize := []string{
-		"CUDA_VISIBLE_DEVICES",
-		"HIP_VISIBLE_DEVICES",
-		"ROCR_VISIBLE_DEVICES",
-	}
-	for _, key := range keysToNormalize {
-		v := envconfig.Var(key)
-		// Skip if empty or CPU-only mode.
-		if v == "" || v == "-1" {
-			continue
-		}
-		// If the value is not a number and doesn't already start with "GPU-", update it.
-		if _, err := strconv.Atoi(v); err != nil && !strings.HasPrefix(v, "GPU-") {
-			newVal := "GPU-" + v
-			slog.Info("Early normalization: updating "+key+" to expected format", "old", v, "new", newVal)
-			os.Setenv(key, newVal)
-		}
-	}
-}
-
 // normalizeGPUEnvValue trims whitespace and removes wrapping quotes.
 func normalizeGPUEnvValue(val string) string {
 	trimmed := strings.TrimSpace(val)
@@ -517,7 +495,7 @@ func GetGPUInfo() GpuInfoList {
 			if cHandles.cudart != nil || cHandles.nvcuda != nil {
 				gpuInfo := CudaGPUInfo{
 					GpuInfo: GpuInfo{
-						Library: "cuda",
+						Library: "cuda", //TODO: Check cuda lib versions cuda_v* etc.
 					},
 					index: i,
 				}
