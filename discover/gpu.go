@@ -152,7 +152,6 @@ func ValidateGpuEnv(key string, discovered []GpuInfo) string {
 	if normalized == "-1" {
 		return "-1"
 	}
-
 	parts := strings.Split(normalized, ",")
 	var validIndices []string
 	for _, part := range parts {
@@ -173,7 +172,11 @@ func ValidateGpuEnv(key string, discovered []GpuInfo) string {
 		if index, err := strconv.Atoi(token); err == nil {
 			if index < 0 || index >= len(filtered) {
 				slog.Warn("Invalid "+key+" value: index out of range", "value", token, "gpuCount", len(filtered))
-				return "-1"
+				// Instead of just unsetting, update to default (first device) since the current index is invalid.
+				defaultValue := "0"
+				os.Setenv(key, defaultValue)
+				slog.Info("Updated " + key + " to default value: " + defaultValue + ". A restart may be required for the change to take effect.")
+				return defaultValue
 			}
 			validIndices = append(validIndices, strconv.Itoa(index))
 			continue
@@ -192,7 +195,10 @@ func ValidateGpuEnv(key string, discovered []GpuInfo) string {
 		}
 		if !found {
 			slog.Warn("Invalid "+key+" value: no matching GPU UUID found", "value", token)
-			return "-1"
+			// Unset the variable so that the system uses the default GPU selection.
+			os.Unsetenv(key)
+			slog.Info("Environment variable " + key + " has been unset to force default GPU selection. A restart may be required for the change to take effect.")
+			return ""
 		}
 	}
 
@@ -701,31 +707,29 @@ func GetGPUInfo() GpuInfoList {
 	}
 	// Validate each GPU-related environment variable.
 	if len(resp) == 0 {
-		slog.Warn("GetGPUInfo: no GPUs detected by libraries, falling back to CPU-only mode")
-		return fallbackToCPU()
-	}
+		slog.Warn("GetGPUInfo: no GPUs detected by libraries, attempting default GPU env values before falling back to CPU-only mode")
 
-	validCuda := ValidateGpuEnv("CUDA_VISIBLE_DEVICES", resp)
-	if validCuda == "-1" {
-		slog.Warn("CUDA_VISIBLE_DEVICES env value is invalid, falling back to CPU-only mode")
-		return fallbackToCPU()
+		validCuda := ValidateGpuEnv("CUDA_VISIBLE_DEVICES", resp)
+		if validCuda == "-1" {
+			slog.Warn("CUDA_VISIBLE_DEVICES env value is invalid, falling back to CPU-only mode")
+			return fallbackToCPU()
+		}
+		validHip := ValidateGpuEnv("HIP_VISIBLE_DEVICES", resp)
+		if validHip == "-1" {
+			slog.Warn("HIP_VISIBLE_DEVICES env value is invalid, falling back to CPU-only mode")
+			return fallbackToCPU()
+		}
+		validRocr := ValidateGpuEnv("ROCR_VISIBLE_DEVICES", resp)
+		if validRocr == "-1" {
+			slog.Warn("ROCR_VISIBLE_DEVICES env value is invalid, falling back to CPU-only mode")
+			return fallbackToCPU()
+		}
+		validOrdinal := ValidateGpuEnv("GPU_DEVICE_ORDINAL", resp)
+		if validOrdinal == "-1" {
+			slog.Warn("GPU_DEVICE_ORDINAL env value is invalid, falling back to CPU-only mode")
+			return fallbackToCPU()
+		}
 	}
-	validHip := ValidateGpuEnv("HIP_VISIBLE_DEVICES", resp)
-	if validHip == "-1" {
-		slog.Warn("HIP_VISIBLE_DEVICES env value is invalid, falling back to CPU-only mode")
-		return fallbackToCPU()
-	}
-	validRocr := ValidateGpuEnv("ROCR_VISIBLE_DEVICES", resp)
-	if validRocr == "-1" {
-		slog.Warn("ROCR_VISIBLE_DEVICES env value is invalid, falling back to CPU-only mode")
-		return fallbackToCPU()
-	}
-	validOrdinal := ValidateGpuEnv("GPU_DEVICE_ORDINAL", resp)
-	if validOrdinal == "-1" {
-		slog.Warn("GPU_DEVICE_ORDINAL env value is invalid, falling back to CPU-only mode")
-		return fallbackToCPU()
-	}
-
 	slog.Debug("GetGPUInfo: final discovered GPU info", "count", len(resp))
 	return resp
 }
