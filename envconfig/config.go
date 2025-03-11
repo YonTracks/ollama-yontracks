@@ -338,9 +338,9 @@ func Values() map[string]string {
 }
 
 // isValid checks whether a raw GPU-related environment variable is valid.
-// The only valid values are an empty string (which means “use default”),
+// The only valid values,
 // "-1" (CPU-only), or a numeric value (e.g. "0") or a value starting with "GPU-"
-// (optionally representing a GPU UUID). A raw value exactly equal to "\"\"" is considered invalid.
+// (optionally representing a GPU UUID). A raw value exactly equal to "\"\"" (empty windows "") is considered invalid.
 func isValid(raw string) bool {
 	trimmed := strings.TrimSpace(raw)
 	if len(trimmed) >= 2 {
@@ -348,9 +348,6 @@ func isValid(raw string) bool {
 			(trimmed[0] == '\'' && trimmed[len(trimmed)-1] == '\'') {
 			trimmed = trimmed[1 : len(trimmed)-1]
 		}
-	}
-	if trimmed == "" {
-		return false
 	}
 	if trimmed == "-1" {
 		return true
@@ -364,38 +361,22 @@ func isValid(raw string) bool {
 	return false
 }
 
-// Var returns an environment variable stripped of leading and trailing quotes or spaces.
-// For GPU-related keys, if the raw value looks like a raw UUID (without "GPU-"),
-// it is normalized by adding the "GPU-" prefix.
-// If the variable is not set at all, it returns an empty string (meaning "use default").
-// For GPU keys, if the value is invalid, it returns "-1" to force CPU-only mode.
 func Var(key string) string {
 	raw := os.Getenv(key)
 	if raw == "" {
 		return ""
-	}
-	if len(raw) >= 2 {
-		if (raw[0] == '"' && raw[len(raw)-1] == '"') ||
-			(raw[0] == '\'' && raw[len(raw)-1] == '\'') {
-			raw = raw[1 : len(raw)-1]
-		}
 	}
 	trimmed := strings.TrimSpace(raw)
 
 	// Normalize raw UUIDs for GPU-related keys.
 	if isGPUKey(key) && !strings.HasPrefix(trimmed, "GPU-") && uuidRegex.MatchString(trimmed) {
 		normalized := "GPU-" + trimmed
-		slog.Debug("Var: normalizing GPU UUID", "key", key, "raw", trimmed, "normalized", normalized)
 		os.Setenv(key, normalized)
 		trimmed = normalized
 	}
 
-	if isGPUKey(key) && trimmed != "" && !isValid(trimmed) {
+	if isGPUKey(key) && (trimmed == "" || !isValid(trimmed)) {
 		slog.Debug("Var: raw value invalid; treating as CPU-only", "key", key, "value", raw)
-		return "-1"
-	}
-	if isGPUKey(key) && trimmed == "-1" {
-		slog.Debug("Var: GPU variable treated as CPU-only", "key", key, "value", trimmed)
 		return "-1"
 	}
 	return trimmed
