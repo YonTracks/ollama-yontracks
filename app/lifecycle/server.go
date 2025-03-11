@@ -160,10 +160,10 @@ func SpawnServer(ctx context.Context, command string) (chan int, error) {
 			default:
 				// Check for critical driver error
 				// If detected, log and exit loop preventing orphaned server processes and crash looping
-				// TODO: auto correct the issues, and respawn
+				// TODO: add retyr logic and auto correct the issues (gpu driver index, out of memory, etc.), then respawn
 				if code == 3221225477 {
 					slog.Warn(fmt.Sprintf("server crash %d - exit code %d ", crashCount, code))
-					slog.Error("Critical driver error detected (check GPU env variables!). Exiting server loop.")
+					slog.Error("Critical driver error detected. Exiting server loop.")
 					done <- code
 					return
 				}
@@ -177,6 +177,7 @@ func SpawnServer(ctx context.Context, command string) (chan int, error) {
 	return done, nil
 }
 
+// TODO: Test fallback options.
 func IsServerRunning(ctx context.Context) bool {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
