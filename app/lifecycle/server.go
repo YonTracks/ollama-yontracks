@@ -167,6 +167,12 @@ func SpawnServer(ctx context.Context, command string) (chan int, error) {
 					done <- code
 					return
 				}
+				if code == 3221226505 {
+					slog.Warn(fmt.Sprintf("server crash %d - exit code %d ", crashCount, code))
+					slog.Error("Critical out of memory error detected. Exiting server loop.")
+					done <- code
+					return
+				}
 				crashCount++
 				slog.Warn(fmt.Sprintf("server crash %d - exit code %d - respawning", crashCount, code))
 				time.Sleep(500 * time.Millisecond * time.Duration(crashCount))

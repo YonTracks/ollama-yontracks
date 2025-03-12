@@ -24,7 +24,10 @@ var uuidRegex = regexp.MustCompile(`^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4
 func Host() *url.URL {
 	defaultPort := "11434"
 
+	// Get OLLAMA_HOST, trim spaces, then remove surrounding quotes if present.
 	s := strings.TrimSpace(Var("OLLAMA_HOST"))
+	s = strings.Trim(s, `"'`) // Remove surrounding quotes
+
 	slog.Debug("Host: raw OLLAMA_HOST", "value", s)
 	scheme, hostport, ok := strings.Cut(s, "://")
 	switch {
@@ -39,6 +42,7 @@ func Host() *url.URL {
 		slog.Debug("Host: scheme set to https, using default port", "port", defaultPort)
 	}
 
+	// Separate any path from the host:port string.
 	hostport, path, _ := strings.Cut(hostport, "/")
 	slog.Debug("Host: after cutting path", "hostport", hostport, "path", path)
 	host, port, err := net.SplitHostPort(hostport)
@@ -52,6 +56,7 @@ func Host() *url.URL {
 		}
 	}
 
+	// Validate port number.
 	if n, err := strconv.ParseInt(port, 10, 32); err != nil || n > 65535 || n < 0 {
 		slog.Warn("Host: invalid port, using default", "port", port, "default", defaultPort)
 		port = defaultPort
@@ -73,6 +78,7 @@ func AllowedOrigins() (origins []string) {
 		slog.Debug("AllowedOrigins: parsed OLLAMA_ORIGINS", "origins", origins)
 	}
 
+	// Append default origins for localhost and common IP addresses.
 	for _, origin := range []string{"localhost", "127.0.0.1", "0.0.0.0"} {
 		origins = append(origins,
 			fmt.Sprintf("http://%s", origin),
@@ -82,6 +88,7 @@ func AllowedOrigins() (origins []string) {
 		)
 	}
 
+	// Append additional hardcoded origins.
 	origins = append(origins,
 		"app://*",
 		"file://*",
@@ -165,6 +172,7 @@ func LoadTimeout() (loadTimeout time.Duration) {
 	return loadTimeout
 }
 
+// Bool returns a function that retrieves a boolean environment variable.
 func Bool(k string) func() bool {
 	return func() bool {
 		if s := Var(k); s != "" {
@@ -205,6 +213,7 @@ var (
 	ContextLength = Uint("OLLAMA_CONTEXT_LENGTH", 2048)
 )
 
+// String returns a function that retrieves a string environment variable.
 func String(s string) func() string {
 	return func() string {
 		v := Var(s)
@@ -223,6 +232,7 @@ var (
 	HsaOverrideGfxVersion = String("HSA_OVERRIDE_GFX_VERSION")
 )
 
+// Uint returns a function that retrieves an unsigned integer from an environment variable.
 func Uint(key string, defaultValue uint) func() uint {
 	return func() uint {
 		if s := Var(key); s != "" {
@@ -250,6 +260,7 @@ var (
 	MaxVRAM = Uint("OLLAMA_MAX_VRAM", 0)
 )
 
+// Uint64 returns a function that retrieves a uint64 from an environment variable.
 func Uint64(key string, defaultValue uint64) func() uint64 {
 	return func() uint64 {
 		if s := Var(key); s != "" {
@@ -269,12 +280,14 @@ func Uint64(key string, defaultValue uint64) func() uint64 {
 // GpuOverhead reserves a portion of VRAM per GPU (in bytes).
 var GpuOverhead = Uint64("OLLAMA_GPU_OVERHEAD", 0)
 
+// EnvVar defines a structure for holding environment variable metadata.
 type EnvVar struct {
 	Name        string
 	Value       any
 	Description string
 }
 
+// AsMap returns a map of environment variables and their metadata.
 func AsMap() map[string]EnvVar {
 	ret := map[string]EnvVar{
 		"OLLAMA_DEBUG":             {"OLLAMA_DEBUG", Debug(), "Show additional debug information (e.g. OLLAMA_DEBUG=1)"},
@@ -328,6 +341,7 @@ func AsMap() map[string]EnvVar {
 	return ret
 }
 
+// Values returns a map of environment variable names to their stringified values.
 func Values() map[string]string {
 	vals := make(map[string]string)
 	for k, v := range AsMap() {
@@ -338,9 +352,8 @@ func Values() map[string]string {
 }
 
 // isValid checks whether a raw GPU-related environment variable is valid.
-// The only valid values,
-// "-1" (CPU-only), or a numeric value (e.g. "0") or a value starting with "GPU-"
-// (optionally representing a GPU UUID). A raw value exactly equal to "\"\"" (empty windows "") is considered invalid.
+// Valid values are "-1" (CPU-only), a numeric value (e.g. "0"), or a value starting with "GPU-" (optionally a GPU UUID).
+// A raw value exactly equal to "\"\"" (empty windows "") is considered invalid.
 func isValid(raw string) bool {
 	trimmed := strings.TrimSpace(raw)
 	if len(trimmed) >= 2 {
@@ -361,12 +374,18 @@ func isValid(raw string) bool {
 	return false
 }
 
+// Var retrieves the value of an environment variable and normalizes it.
+// It trims spaces and strips any surrounding quotes from the raw value.
+// Special handling is applied to GPU-related environment variables.
 func Var(key string) string {
 	raw := os.Getenv(key)
 	if raw == "" {
 		return ""
 	}
+
+	// Trim spaces and remove any surrounding quotes.
 	trimmed := strings.TrimSpace(raw)
+	trimmed = strings.Trim(trimmed, `"'`) // Remove surrounding quotes
 
 	// Normalize raw UUIDs for GPU-related keys.
 	if isGPUKey(key) && !strings.HasPrefix(trimmed, "GPU-") && uuidRegex.MatchString(trimmed) {
@@ -382,6 +401,7 @@ func Var(key string) string {
 	return trimmed
 }
 
+// isGPUKey checks whether a key is GPU-related.
 func isGPUKey(key string) bool {
 	gpuKeys := map[string]bool{
 		"CUDA_VISIBLE_DEVICES":     true,
