@@ -176,13 +176,13 @@ func LoadTimeout() (loadTimeout time.Duration) {
 func Bool(k string) func() bool {
 	return func() bool {
 		if s := Var(k); s != "" {
-			slog.Debug("Bool: reading", "key", k, "raw", s)
+			// slog.Debug("Bool: reading", "key", k, "raw", s)
 			b, err := strconv.ParseBool(s)
 			if err != nil {
 				slog.Warn("Bool: error parsing boolean, defaulting to true", "key", k, "value", s, "error", err.Error())
 				return true
 			}
-			slog.Debug("Bool: parsed value", "key", k, "value", b)
+			// slog.Debug("Bool: parsed value", "key", k, "value", b)
 			return b
 		}
 		slog.Debug("Bool: key not set, defaulting to false", "key", k)
@@ -217,7 +217,7 @@ var (
 func String(s string) func() string {
 	return func() string {
 		v := Var(s)
-		slog.Debug("String: reading", "key", s, "value", v)
+		// slog.Debug("String: reading", "key", s, "value", v)
 		return v
 	}
 }
@@ -236,7 +236,7 @@ var (
 func Uint(key string, defaultValue uint) func() uint {
 	return func() uint {
 		if s := Var(key); s != "" {
-			slog.Debug("Uint: reading", "key", key, "raw", s)
+			// slog.Debug("Uint: reading", "key", key, "raw", s)
 			if n, err := strconv.ParseUint(s, 10, 64); err != nil {
 				slog.Warn("Uint: invalid environment variable, using default", "key", key, "value", s, "default", defaultValue)
 			} else {
@@ -244,7 +244,7 @@ func Uint(key string, defaultValue uint) func() uint {
 				return uint(n)
 			}
 		}
-		slog.Debug("Uint: key not set, using default", "key", key, "default", defaultValue)
+		// slog.Debug("Uint: key not set, using default", "key", key, "default", defaultValue)
 		return defaultValue
 	}
 }
@@ -264,7 +264,7 @@ var (
 func Uint64(key string, defaultValue uint64) func() uint64 {
 	return func() uint64 {
 		if s := Var(key); s != "" {
-			slog.Debug("Uint64: reading", "key", key, "raw", s)
+			// slog.Debug("Uint64: reading", "key", key, "raw", s)
 			if n, err := strconv.ParseUint(s, 10, 64); err != nil {
 				slog.Warn("Uint64: invalid environment variable, using default", "key", key, "value", s, "default", defaultValue)
 			} else {
@@ -272,7 +272,7 @@ func Uint64(key string, defaultValue uint64) func() uint64 {
 				return n
 			}
 		}
-		slog.Debug("Uint64: key not set, using default", "key", key, "default", defaultValue)
+		// slog.Debug("Uint64: key not set, using default", "key", key, "default", defaultValue)
 		return defaultValue
 	}
 }

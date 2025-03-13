@@ -29,37 +29,31 @@ func terminate(cmd *exec.Cmd) error {
 
 	pid := cmd.Process.Pid
 
-	f, err := dll.FindProc("AttachConsole")
+	attachProc, err := dll.FindProc("AttachConsole")
 	if err != nil {
 		return err
 	}
-
-	r1, _, err := f.Call(uintptr(pid))
+	r1, _, err := attachProc.Call(uintptr(pid))
 	if r1 == 0 && err != syscall.ERROR_ACCESS_DENIED {
 		return err
 	}
 
-	f, err = dll.FindProc("SetConsoleCtrlHandler")
+	setHandlerProc, err := dll.FindProc("SetConsoleCtrlHandler")
 	if err != nil {
 		return err
 	}
-
-	r1, _, err = f.Call(0, 1)
+	r1, _, err = setHandlerProc.Call(0, 1)
 	if r1 == 0 {
 		return err
 	}
 
-	f, err = dll.FindProc("GenerateConsoleCtrlEvent")
+	genEventProc, err := dll.FindProc("GenerateConsoleCtrlEvent")
 	if err != nil {
 		return err
 	}
 
-	r1, _, err = f.Call(windows.CTRL_BREAK_EVENT, uintptr(pid))
-	if r1 == 0 {
-		return err
-	}
-
-	r1, _, err = f.Call(windows.CTRL_C_EVENT, uintptr(pid))
+	// Only send CTRL_BREAK_EVENT to gracefully terminate the process.
+	r1, _, err = genEventProc.Call(windows.CTRL_BREAK_EVENT, uintptr(pid))
 	if r1 == 0 {
 		return err
 	}
