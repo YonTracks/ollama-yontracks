@@ -81,8 +81,8 @@ func Run() {
 			done <- 1
 		}
 	}
-
-	StartBackgroundUpdaterChecker(ctx, t.UpdateAvailable)
+	// Disabled for now as it causes issues when upgrading from ollama-yontracks (best practices are to uninstall the old version before installing a new one TODO: uninstaller should handle this properly).
+	// StartBackgroundUpdaterChecker(ctx, t.UpdateAvailable)
 
 	t.Run()
 	cancel()

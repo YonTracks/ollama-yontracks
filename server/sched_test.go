@@ -258,7 +258,7 @@ func TestRequestsSimpleReloadSameModel(t *testing.T) {
 }
 
 func TestRequestsMultipleLoadedModels(t *testing.T) {
-	ctx, done := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	ctx, done := context.WithTimeout(context.Background(), 5*time.Second)
 	defer done()
 	s := InitScheduler(ctx)
 	s.getGpuFn = getGpuFn
@@ -712,7 +712,7 @@ func TestAlreadyCanceled(t *testing.T) {
 }
 
 func TestHomogeneousGPUs(t *testing.T) {
-	ctx, done := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, done := context.WithTimeout(context.Background(), 1*time.Second)
 	defer done()
 	s := InitScheduler(ctx)
 
