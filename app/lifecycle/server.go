@@ -226,6 +226,7 @@ func assignProcessToJob(p *os.Process) error {
 }
 
 // SpawnServer launches the server process and respawns it on crash/restart.
+// worse case scenario error hanling only basic error handling is implemented. TODO: More sophisticated error handling needed.
 func SpawnServer(ctx context.Context, command string) (chan int, error) {
 	done := make(chan int)
 	go func() {
@@ -291,6 +292,7 @@ func SpawnServer(ctx context.Context, command string) (chan int, error) {
 			}
 
 			// Handle critical error: exit code 3221225477.
+			// TODO: ensure no models are running before respawning or just restarting
 			if code == 3221225477 {
 				slog.Warn("Server crash - critical driver error detected. Resetting environment and retrying...")
 				ResetEnvironmentToDefault()
@@ -305,6 +307,9 @@ func SpawnServer(ctx context.Context, command string) (chan int, error) {
 				if cmd.ProcessState != nil {
 					code = cmd.ProcessState.ExitCode()
 				}
+			}
+			if code == 3221226505 {
+				slog.Warn("Server crash - critical driver error detected. ToDO: handle this case")
 			}
 
 			// Exit loop on further critical errors.
