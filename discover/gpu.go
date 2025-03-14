@@ -24,7 +24,6 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/ollama/ollama/app/lifecycle"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 )
@@ -139,9 +138,10 @@ func filterDiscovered(key string, discovered []GpuInfo) []GpuInfo {
 }
 
 // ValidateGpuEnv validates the GPU-related environment variable based on the discovered GPUs.
-// It supports comma-separated tokens (numeric indices or UUIDs) and forces CPU-only mode ("-1")
-// if any token is invalid. If an invalid token is found, it immediately resets the env var
-// to a default value, refreshes the environment, and requests a restart.
+// It supports comma-separated tokens (numeric indices or UUIDs). If a token is invalid,
+// it resets the env var to a default value. If no GPUs were discovered by libraries but system
+// tools indicate a GPU exists, it resets the environment to the default ("0") and returns that value,
+// giving the GPU libraries a chance to reinitialize.
 func ValidateGpuEnv(key string, discovered []GpuInfo) string {
 	// Filter discovered GPUs for the specific env var.
 	filtered := filterDiscovered(key, discovered)
@@ -161,31 +161,29 @@ func ValidateGpuEnv(key string, discovered []GpuInfo) string {
 
 	for _, part := range parts {
 		token := normalizeGPUEnvValue(part)
-
 		// If token is a raw UUID (without "GPU-"), add the prefix.
 		if isUUID(token) && !strings.HasPrefix(token, "GPU-") {
 			token = "GPU-" + token
 			slog.Debug("ValidateGpuEnv: normalized raw UUID", "key", key, "token", token)
 		}
-
 		if token == "-1" {
 			// CPU-only mode.
 			return "-1"
 		}
-
 		// Try to parse as numeric index.
 		if index, err := strconv.Atoi(token); err == nil {
+			// If the index is out of range, update the variable to default ("0") and return.
 			if index < 0 || index >= len(filtered) {
 				slog.Warn("Invalid "+key+" value: index out of range", "value", token, "gpuCount", len(filtered))
 				slog.Info("Invalid GPU environment detected. Resetting " + key + " to default.")
-				// Immediately refresh the environment before restart.
-				lifecycle.ResetEnvironmentToDefault()
-				lifecycle.RequestServerRestart()
+				defaultValue := "0"
+				os.Setenv(key, defaultValue)
+				slog.Info("Updated " + key + " to default value: " + defaultValue)
+				return defaultValue
 			}
 			validIndices = append(validIndices, strconv.Itoa(index))
 			continue
 		}
-
 		// For non-numeric tokens, compare after trimming the "GPU-" prefix.
 		trimmedToken := strings.TrimPrefix(token, "GPU-")
 		found := false
@@ -200,9 +198,9 @@ func ValidateGpuEnv(key string, discovered []GpuInfo) string {
 		if !found {
 			slog.Warn("Invalid "+key+" value: no matching GPU UUID found", "value", token)
 			slog.Info("Invalid GPU environment detected. Resetting " + key + " to default.")
-			// Immediately refresh the environment before restart.
-			lifecycle.ResetEnvironmentToDefault()
-			lifecycle.RequestServerRestart()
+			os.Unsetenv(key)
+			slog.Info("Environment variable " + key + " has been unset.")
+			return ""
 		}
 	}
 
@@ -453,19 +451,24 @@ func GetGPUInfo() GpuInfoList {
 
 	// Use defer to release any acquired C library handles when done.
 	defer func() {
-		if cHandles != nil {
-			if cHandles.cudart != nil {
-				C.cudart_release(*cHandles.cudart)
+		// Only call release functions if at least one GPU was detected.
+		if len(cudaGPUs) > 0 || len(rocmGPUs) > 0 || len(oneapiGPUs) > 0 {
+			if cHandles != nil {
+				if cHandles.cudart != nil {
+					C.cudart_release(*cHandles.cudart)
+				}
+				if cHandles.nvcuda != nil {
+					C.nvcuda_release(*cHandles.nvcuda)
+				}
+				if cHandles.nvml != nil {
+					C.nvml_release(*cHandles.nvml)
+				}
 			}
-			if cHandles.nvcuda != nil {
-				C.nvcuda_release(*cHandles.nvcuda)
+			if oHandles != nil && oHandles.oneapi != nil {
+				C.oneapi_release(*oHandles.oneapi)
 			}
-			if cHandles.nvml != nil {
-				C.nvml_release(*cHandles.nvml)
-			}
-		}
-		if oHandles != nil && oHandles.oneapi != nil {
-			C.oneapi_release(*oHandles.oneapi)
+		} else {
+			slog.Debug("No GPUs discovered; skipping GPU library release")
 		}
 	}()
 
@@ -504,7 +507,8 @@ func GetGPUInfo() GpuInfoList {
 
 		cHandles = initCudaHandles()
 		// NVIDIA GPU discovery.
-		for i := range cHandles.deviceCount {
+		// Modernized loop: iterate using range over a temporary slice.
+		for i := range make([]struct{}, cHandles.deviceCount) {
 			if cHandles.cudart != nil || cHandles.nvcuda != nil {
 				gpuInfo := CudaGPUInfo{
 					GpuInfo: GpuInfo{
@@ -585,9 +589,11 @@ func GetGPUInfo() GpuInfoList {
 			slog.Debug("GetGPUInfo: attempting Intel GPU discovery")
 			oHandles = initOneAPIHandles()
 			if oHandles != nil && oHandles.oneapi != nil {
-				for d := range oHandles.deviceCount {
+				// Modernized loop over oneapi device count.
+				for d := range make([]struct{}, oHandles.deviceCount) {
 					devCount := C.oneapi_get_device_count(*oHandles.oneapi, C.int(d))
-					for i := range int(devCount) {
+					// Modernized inner loop over device count.
+					for i := range make([]struct{}, int(devCount)) {
 						gpuInfo := OneapiGPUInfo{
 							GpuInfo: GpuInfo{
 								Library: "oneapi",
@@ -837,8 +843,9 @@ func FindGPULibs(baseLibName string, defaultPatterns []string) []string {
 	return gpuLibPaths
 }
 
-// Bootstrap the CUDART management library.
-// Returns: num devices, handle, libPath, error.
+// loadCUDARTMgmt attempts to initialize the CUDART library.
+// If it fails with error code 100 (cudart init failure), then if CUDA_VISIBLE_DEVICES is not "0",
+// it resets the variable to "0" and tries again.
 func loadCUDARTMgmt(cudartLibPaths []string) (int, *C.cudart_handle_t, string, error) {
 	var resp C.cudart_init_resp_t
 	resp.ch.verbose = getVerboseState()
@@ -848,9 +855,31 @@ func loadCUDARTMgmt(cudartLibPaths []string) (int, *C.cudart_handle_t, string, e
 		C.cudart_init(lib, &resp)
 		C.free(unsafe.Pointer(lib)) // Immediate free after use.
 		if resp.err != nil {
-			err = fmt.Errorf("unable to load cudart library %s: %s", libPath, C.GoString(resp.err))
-			slog.Debug("loadCUDARTMgmt: error", "err", err.Error())
+			errMsg := C.GoString(resp.err)
 			C.free(unsafe.Pointer(resp.err))
+			// If the error indicates code 100 (cudart init failure)
+			if strings.Contains(errMsg, "100") {
+				slog.Info("loadCUDARTMgmt: cudart init failure (error code 100) - no CUDA devices available.")
+				// If CUDA_VISIBLE_DEVICES is not already "0", update it and try again.
+				if os.Getenv("CUDA_VISIBLE_DEVICES") != "0" {
+					slog.Info("Updating CUDA_VISIBLE_DEVICES to default value '0' and retrying GPU initialization.")
+					os.Setenv("CUDA_VISIBLE_DEVICES", "0")
+					// Retry the current libPath.
+					lib := C.CString(libPath)
+					C.cudart_init(lib, &resp)
+					C.free(unsafe.Pointer(lib))
+					if resp.err == nil {
+						slog.Debug("loadCUDARTMgmt: successfully loaded after resetting env", "libPath", libPath, "deviceCount", resp.num_devices)
+						return int(resp.num_devices), &resp.ch, libPath, nil
+					}
+					// If still failing, clear the error.
+					C.free(unsafe.Pointer(resp.err))
+				}
+				// Return zero devices without error.
+				return 0, nil, "", nil
+			}
+			err = fmt.Errorf("unable to load cudart library %s: %s", libPath, errMsg)
+			slog.Debug("loadCUDARTMgmt: error", "err", err.Error())
 		} else {
 			slog.Debug("loadCUDARTMgmt: successfully loaded", "libPath", libPath, "deviceCount", resp.num_devices)
 			return int(resp.num_devices), &resp.ch, libPath, nil
@@ -936,7 +965,8 @@ func loadOneapiMgmt(oneapiLibPaths []string) (int, *C.oneapi_handle_t, string, e
 			slog.Debug("loadOneapiMgmt:", "error", err)
 			C.free(unsafe.Pointer(resp.err))
 		} else {
-			for i := range int(resp.oh.num_drivers) {
+			// Modernized loop: iterate using range over a temporary slice.
+			for i := range make([]struct{}, int(resp.oh.num_drivers)) {
 				num_devices += int(C.oneapi_get_device_count(resp.oh, C.int(i)))
 			}
 			slog.Debug("loadOneapiMgmt: successfully loaded", "libPath", libPath, "deviceCount", num_devices)

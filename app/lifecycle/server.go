@@ -129,7 +129,7 @@ func start(ctx context.Context, command string) (*exec.Cmd, error) {
 		if cmd.Process != nil {
 			// Attempt graceful termination.
 			if err := terminate(cmd); err != nil {
-				// For specific windows parameter errors, fall back to force kill.
+				// For specific Windows parameter errors, fall back to force kill.
 				if strings.Contains(err.Error(), "parameter") {
 					return cmd.Process.Kill()
 				}
@@ -214,11 +214,13 @@ func assignProcessToJob(p *os.Process) error {
 		for {
 			exited, _ := isProcessExited(p.Pid)
 			if exited {
+				// Delay briefly to ensure all handles are released.
+				time.Sleep(200 * time.Millisecond)
+				windows.CloseHandle(job)
 				break
 			}
 			time.Sleep(100 * time.Millisecond)
 		}
-		windows.CloseHandle(job)
 	}()
 	return nil
 }
@@ -314,7 +316,8 @@ func SpawnServer(ctx context.Context, command string) (chan int, error) {
 
 			crashCount++
 			slog.Warn("Server crashed - respawning", "crashCount", crashCount, "exitCode", code)
-			time.Sleep(backoffDelay(crashCount))
+			// Delay before respawn to allow cleanup.
+			time.Sleep(backoffDelay(crashCount) + 200*time.Millisecond)
 		}
 	}()
 	return done, nil
